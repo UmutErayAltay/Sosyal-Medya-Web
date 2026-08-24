@@ -3616,6 +3616,16 @@ header[role="banner"] {
     color: var(--text);
 }
 
+/* appPrompt()'un input'u — appAlert/appConfirm'ün AYNI kutu/renk dilini
+   sürdürür (kullanıcı raporu: window.prompt()'un markasız tarayıcı
+   diyaloğu kötü görünüyordu). */
+.app-confirm-input {
+    width: 100%; margin: 0 0 20px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--text); font-size: 15px;
+    box-sizing: border-box;
+}
+
 .app-confirm-buttons {
     display: flex; gap: 12px; justify-content: flex-end;
 }

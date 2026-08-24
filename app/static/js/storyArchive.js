@@ -181,9 +181,11 @@
         highlightBtn.addEventListener('click', async function () {
             if (!activeStory) return;
             // MVP: storyHighlights.js'teki picker modalı sadece feed.html'de var
-            // (stories-bar'a bağımlı), profilde YOK — kullanıcı isteğinin izin
-            // verdiği basit prompt() akışı kullanılıyor.
-            var title = window.prompt('Öne çıkan başlığı:');
+            // (stories-bar'a bağımlı), profilde YOK. Kullanıcı raporu: tarayıcının
+            // KENDİ window.prompt()'u "site diyor ki" gibi markasız bir chrome
+            // metni gösterip kötü görünüyordu — appAlert/appConfirm ile AYNI
+            // görsel dile sahip window.appPrompt() (confirmModal.js) kullanılıyor.
+            var title = await window.appPrompt('Öne çıkan başlığı:');
             if (title === null) return; // vazgeçildi
             title = title.trim();
             if (!title) { await window.appAlert('Bir başlık gir.'); return; }
