@@ -275,6 +275,22 @@
                 <div class="story-form-left">
                     <textarea name="caption" id="story-caption-input" placeholder="Bir şey yaz (opsiyonel)..." rows="2" aria-label="Hikaye altyazısı"></textarea>
 
+                    {# Yazı rengi seçici — altyazı YAZILDIĞINDA görünür (stories.js input
+                       listener'ı kontrol eder, storyTextPreview ile AYNI görünürlük
+                       tetikleyicisi). Native Android ile AYNI 9 renk (platformlar arası
+                       tutarlılık). #}
+                    <div id="story-text-color-palette" class="story-text-color-palette" hidden aria-label="Yazı rengi seç">
+                        <button type="button" class="story-text-color-swatch" data-color="#ffffff" title="Beyaz" style="background-color: #ffffff;" aria-label="Yazı rengi: beyaz"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#000000" title="Siyah" style="background-color: #000000;" aria-label="Yazı rengi: siyah"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#e74c3c" title="Kırmızı" style="background-color: #e74c3c;" aria-label="Yazı rengi: kırmızı"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#e67e22" title="Turuncu" style="background-color: #e67e22;" aria-label="Yazı rengi: turuncu"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#f1c40f" title="Sarı" style="background-color: #f1c40f;" aria-label="Yazı rengi: sarı"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#27ae60" title="Yeşil" style="background-color: #27ae60;" aria-label="Yazı rengi: yeşil"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#2980b9" title="Mavi" style="background-color: #2980b9;" aria-label="Yazı rengi: mavi"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#9b59b6" title="Mor" style="background-color: #9b59b6;" aria-label="Yazı rengi: mor"></button>
+                        <button type="button" class="story-text-color-swatch" data-color="#ff6fa5" title="Pembe" style="background-color: #ff6fa5;" aria-label="Yazı rengi: pembe"></button>
+                    </div>
+
                     <div id="story-poll-options-container" class="poll-options-container" hidden>
                         <input type="text" name="poll_option_1" placeholder="Seçenek 1" maxlength="80">
                         <input type="text" name="poll_option_2" placeholder="Seçenek 2" maxlength="80">
@@ -351,6 +367,7 @@
             {# Gizli input'lar: background_color, visibility ve altyazı konumu
                (0-1 arası oran — anketin poll_position_x/y'siyle AYNI temsil) #}
             <input type="hidden" name="background_color" id="story-bg-input" value="">
+            <input type="hidden" name="caption_color" id="story-text-color-input" value="">
             <input type="hidden" name="visibility" id="story-visibility-input" value="{{ story_default_visibility }}">
             <input type="hidden" name="caption_position_x" id="story-caption-position-x-input" value="0.5">
             <input type="hidden" name="caption_position_y" id="story-caption-position-y-input" value="0.75">

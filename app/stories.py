@@ -23,25 +23,25 @@ _last_cleanup = 0.0
 
 
 def _cleanup_expired_stories(sb) -> None:
-    """Süresi dolmuş (expires_at geçmiş) hikayeleri siler.
+    """ARTIK NO-OP — süresi dolmuş hikayeler fiziksel olarak SİLİNMİYOR.
 
-    Ayrı bir cron/scheduler YOK (bu projede hiç yok, bkz. notifications.py
-    RETENTION_DAYS deseni) — feed her ziyaret edildiğinde fırsatçı temizlik
-    yeterli, bu ölçekte (arkadaş grubu) hikayelerin saatlerce/günlerce
-    görüntülenmeden birikmesi olası değil. En fazla 10 dakikada bir çalışması
-    için throttle'lenir (cleanup DDL çalışması pahalı)."""
+    Kullanıcı isteği: hikaye sahibi kendi süresi dolmuş hikayelerini bir
+    arşivde görebilsin (öne çıkanlara ekleyebilsin veya kalıcı silebilsin),
+    bu yüzden DELETE kaldırıldı. "Aktif" ile "arşivde" ayrımı artık salt
+    `expires_at` filtresiyle yapılır (aktif: `.gt("expires_at", now)` —
+    bkz. active_stories_bar/api_user_stories; arşiv: `.lte("expires_at", now)`
+    — bkz. app/api_v1/stories.py::api_story_archive, SADECE sahibi görür).
+    Tamamen kalıcı silme artık yalnızca api_delete_story()'den (kullanıcının
+    kendi isteğiyle) mümkün. Fonksiyon ve çağrı yeri (active_stories_bar
+    içinde) BİLİNÇLİ OLARAK korunuyor — throttle mantığı (_last_cleanup)
+    değişmedi, ileride başka bir opportunistic temizlik ihtiyacı çıkarsa
+    buraya eklenir."""
     global _last_cleanup
     import time
     now_ts = time.time()
     if now_ts - _last_cleanup < 600:
         return
     _last_cleanup = now_ts
-
-    now = datetime.now(timezone.utc).isoformat()
-    try:
-        sb.table("stories").delete().lt("expires_at", now).execute()
-    except Exception:
-        pass  # sql/migration_stories.sql henüz uygulanmamış olabilir
 
 
 def attach_story_poll(sb, story: dict, me: str) -> None:
@@ -285,6 +285,14 @@ def create_story():
     if has_image or has_video:
         background_color = None
 
+    # Altyazı yazı rengi — background_color ile AYNI serbest hex regex.
+    # background_color'ın AKSİNE has_image/has_video durumunda null'a
+    # DÜŞÜRÜLMEZ — yazının rengi arka planın türünden BAĞIMSIZ bir kavram
+    # (bkz. app/api_v1/stories.py::api_create_story, AYNI karar).
+    caption_color = (request.form.get("caption_color") or "").strip()
+    if caption_color and not re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", caption_color):
+        caption_color = None
+
     visibility = request.form.get("visibility", "public")
     if visibility not in ("public", "followers", "close_friends"):
         visibility = "public"
@@ -297,6 +305,7 @@ def create_story():
         "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
         "background_color": background_color, "visibility": visibility,
         "caption_position_x": caption_position_x, "caption_position_y": caption_position_y,
+        "caption_color": caption_color,
     }
     try:
         result = sb.table("stories").insert(story_data).execute()
@@ -351,7 +360,7 @@ def user_stories(user_id):
         # bu alanlar yok zaten null gelir).
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, visibility, background_color, "
-            "caption_position_x, caption_position_y, caption_style, overlay_elements"
+            "caption_position_x, caption_position_y, caption_style, caption_color, overlay_elements"
         ).eq("user_id", user_id).gt("expires_at", now).order("created_at").execute().data
     except Exception:
         rows = []
@@ -380,6 +389,28 @@ def user_stories(user_id):
         is_mine=(user_id == me),
         stories=rows,
     )
+
+
+@bp.route("/stories/archive")
+@login_required
+@retry_on_connection_error
+def story_archive():
+    """Çağıran kullanıcının KENDİ süresi dolmuş (arşivlenmiş) hikayeleri —
+    user_stories()'in AKSİNE user_id parametresi YOK, bu kişisel/gizli bir
+    liste. _cleanup_expired_stories() artık satırları SİLMEDİĞİ için (bkz.
+    o fonksiyonun güncellenmiş yorumu) bu satırlar kalıcı olarak burada
+    kalır, sahibi save_highlight/delete_story ile kendisi yönetir."""
+    sb = get_sb()
+    me = session["user"]["id"]
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        rows = sb.table("stories").select(
+            "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
+            "background_color, caption_position_x, caption_position_y, caption_style, caption_color"
+        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
+    except Exception:
+        rows = []
+    return jsonify(stories=rows)
 
 
 @bp.route("/stories/<story_id>/react", methods=["POST"])

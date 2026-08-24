@@ -61,7 +61,10 @@ def api_create_story():
     `poll_option_1..4`, `poll_position_x/y`, `poll_scale`,
     `caption_position_x/y`, `caption_style` (opsiyonel, tam olarak
     "pill_light"/"pill_dark" — geçersiz/boşsa sessizce null'a düşer, render
-    tamamen client-side), `background_color` (medya varsa yok sayılır),
+    tamamen client-side), `caption_color` (opsiyonel, herhangi bir geçerli
+    hex renk — background_color ile AYNI serbest regex, whitelist YOK;
+    background_color'ın aksine medya varlığından BAĞIMSIZ, yazının rengini
+    belirtir), `background_color` (medya varsa yok sayılır),
     `visibility` (public/followers/close_friends, varsayılan public),
     `overlay_elements` (ÇOKLU sticker — JSON-ENCODED STRING, dizi, en fazla
     3 eleman TOPLAM, `type` alanına göre 3 şekilden biri:
@@ -137,6 +140,15 @@ def api_create_story():
     caption_style = (request.form.get("caption_style") or "").strip()
     if caption_style not in ("pill_light", "pill_dark"):
         caption_style = None
+
+    # Altyazı yazı rengi — background_color ile AYNI serbest hex regex,
+    # whitelist YOK (native tarafında 9 sabit renk sunulsa da backend o
+    # listeye BAĞLANMAZ, ileride kolayca değişebilsin). background_color'ın
+    # aksine has_image/has_video durumunda null'a DÜŞÜRÜLMEZ — yazının rengi
+    # arka planın türünden (renk/görsel/video) BAĞIMSIZ bir kavram.
+    caption_color = (request.form.get("caption_color") or "").strip()
+    if caption_color and not re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", caption_color):
+        caption_color = None
 
     # Overlay sticker'ları (görsel/GIF, @mention, #hashtag — ÇOKLU) — tek
     # `overlay_elements` alanı, JSON-encoded string olarak gelir (multipart
@@ -275,6 +287,7 @@ def api_create_story():
         "background_color": background_color, "visibility": visibility,
         "caption_position_x": caption_position_x, "caption_position_y": caption_position_y,
         "caption_style": caption_style,
+        "caption_color": caption_color,
         # Supabase python client jsonb kolonuna native list/dict kabul eder —
         # burada string'e ÇEVRİLMEZ, JSON-encode SADECE gelen form alanında.
         "overlay_elements": overlay_elements or None,
@@ -336,7 +349,7 @@ def api_user_stories(user_id):
     try:
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, visibility, background_color, "
-            "caption_position_x, caption_position_y, caption_style, overlay_elements"
+            "caption_position_x, caption_position_y, caption_style, caption_color, overlay_elements"
         ).eq("user_id", user_id).gt("expires_at", now).order("created_at").execute().data
     except Exception:
         rows = []
@@ -362,6 +375,30 @@ def api_user_stories(user_id):
         is_mine=(user_id == me),
         stories=rows,
     )
+
+
+# ----------------------- KENDİ ARŞİVİM (süresi dolmuş hikayeler) -----------------------
+
+@bp.route("/stories/archive")
+@api_login_required
+def api_story_archive():
+    """Çağıran kullanıcının KENDİ süresi dolmuş (arşivlenmiş) hikayeleri —
+    api_user_stories()'in AKSİNE user_id parametresi YOK/kabul edilmiyor,
+    bu kişisel/gizli bir liste (başkasının arşivi asla görüntülenemez).
+    _cleanup_expired_stories() artık satırları SİLMEDİĞİ için (bkz. o
+    fonksiyonun güncellenmiş yorumu) bu satırlar kalıcı olarak burada
+    kalır, sahibi save-highlight/delete ile kendisi yönetir."""
+    sb = get_sb()
+    me = request.api_user["id"]
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        rows = sb.table("stories").select(
+            "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
+            "background_color, caption_position_x, caption_position_y, caption_style, caption_color"
+        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
+    except Exception:
+        rows = []
+    return jsonify(stories=rows)
 
 
 # ----------------------- GÖRÜNTÜLEYENLER (kim gördü) -----------------------

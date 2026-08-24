@@ -47,6 +47,7 @@
                 <a href="{{ url_for('routes.profile_edit') }}" class="btn btn-ghost">Profili düzenle</a>
                 <a href="{{ url_for('routes.insights') }}" class="btn btn-ghost">{{ icons.icon('bar-chart-2', size=16) }} İstatistikler</a>
                 <a href="{{ url_for('routes.drafts_list') }}" class="btn btn-ghost">{{ icons.icon('file-text', size=16) }} Taslaklarım</a>
+                <button type="button" class="btn btn-ghost" id="story-archive-open-btn">{{ icons.icon('archive', size=16) }} Hikaye Arşivim</button>
             {% elif is_blocked_by_me %}
                 <form action="{{ url_for('blocks.toggle_block', username=profile.username) }}"
                       method="post" class="inline">
@@ -312,6 +313,45 @@
         </div>
     </div>
 </div>
+
+{% if is_self %}
+{# --- Hikaye Arşivi Modalı: süresi dolmuş (24s+, expires_at geçmiş) hikayeler
+   — GET /stories/archive HER ZAMAN çağıranın kendi arşivini döner, backend
+   hazır (bkz. app/stories.py). Basit MVP: grid + tıklayınca büyütülmüş
+   alt-panelde Öne Çıkar/Sil (bkz. storyArchive.js). --- #}
+<div class="modal-overlay" id="story-archive-modal" role="dialog" aria-modal="true"
+     aria-labelledby="story-archive-modal-title" hidden>
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="story-archive-modal-title">Hikaye Arşivim</h2>
+            <button type="button" class="modal-close" id="story-archive-close" aria-label="Kapat">{{ icons.icon('x', size=16) }}</button>
+        </div>
+        <div class="modal-body">
+            <div id="story-archive-grid" class="story-archive-grid" aria-live="polite">
+                <p class="muted center">Yükleniyor...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Arşivlenmiş tek hikayenin büyütülmüş görünümü — Öne Çıkar / Sil #}
+<div class="modal-overlay" id="story-archive-detail-modal" role="dialog" aria-modal="true"
+     aria-labelledby="story-archive-detail-title" hidden>
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="story-archive-detail-title" class="sr-only">Arşivlenmiş hikaye</h2>
+            <button type="button" class="modal-close" id="story-archive-detail-close" aria-label="Kapat">{{ icons.icon('x', size=16) }}</button>
+        </div>
+        <div class="modal-body">
+            <div id="story-archive-detail-media" class="story-archive-detail-media"></div>
+            <div class="story-archive-detail-actions">
+                <button type="button" class="btn btn-primary" id="story-archive-highlight-btn">{{ icons.icon('star', size=16) }} Öne Çıkar</button>
+                <button type="button" class="btn btn-danger" id="story-archive-delete-btn">{{ icons.icon('trash-2', size=16) }} Sil</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 {% endblock %}
 {% block scripts %}

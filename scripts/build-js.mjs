@@ -48,7 +48,7 @@ const MANIFEST = {
   'post-interactions': ['likes.js', 'polls.js', 'bookmarks.js', 'follow.js', 'postMuteButton.js', 'linkPreview.js'],
 
   'feed-extra': ['postModal.js', 'stories.js', 'storyHighlights.js', 'infiniteScroll.js'],
-  'profile-extra': ['collections.js', 'profileTabs.js', 'storyHighlights.js', 'stickers.js'],
+  'profile-extra': ['collections.js', 'profileTabs.js', 'storyHighlights.js', 'storyArchive.js', 'stickers.js'],
   'post-detail-extra': ['stickers.js', 'comments.js'],
 
   // messages/_convo_list.html ve messages/_realtime_init.html AYRI partial'lar

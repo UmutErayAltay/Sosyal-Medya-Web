@@ -32,6 +32,8 @@
     var storyBgToggleBtn = document.getElementById('story-bg-toggle-btn');
     var storyBgPalette = document.getElementById('story-bg-palette');
     var storyBgInput = document.getElementById('story-bg-input');
+    var storyTextColorPalette = document.getElementById('story-text-color-palette');
+    var storyTextColorInput = document.getElementById('story-text-color-input');
     var storyTextPreview = document.getElementById('story-text-preview');
     var storyMediaPreviewInner = document.querySelector('.story-media-preview-inner');
     var storyVisibilityInput = document.getElementById('story-visibility-input');
@@ -74,6 +76,14 @@
         // Swatch'ları deselect et
         if (storyBgPalette) {
             storyBgPalette.querySelectorAll('.story-bg-swatch').forEach(function (sw) {
+                sw.classList.remove('selected');
+            });
+        }
+        // Yazı rengi seçicisini de gizle ve reset et — storyBgPalette ile AYNI mantık
+        if (storyTextColorPalette) storyTextColorPalette.hidden = true;
+        if (storyTextColorInput) storyTextColorInput.value = '';
+        if (storyTextColorPalette) {
+            storyTextColorPalette.querySelectorAll('.story-text-color-swatch').forEach(function (sw) {
                 sw.classList.remove('selected');
             });
         }
@@ -155,6 +165,13 @@
             // widget'ının her toggle-open'da initStoryPollWidget() çağırdığı
             // AYNI mantık.
             if (hasText && wasHidden) initStoryCaptionWidget();
+        }
+
+        // Yazı rengi seçicisi: caption VARSA görünür (kullanıcı isteği: "yazıyı
+        // yazarken alt kısımda 9 farklı renk çıkabilir") — storyTextPreview'ın
+        // görünürlük tetikleyicisiyle AYNI.
+        if (storyTextColorPalette) {
+            storyTextColorPalette.hidden = !e.target.value.trim();
         }
     });
 
@@ -391,6 +408,30 @@
                 storyMediaPreviewInner.style.backgroundColor = color;
             }
         }
+    });
+
+    // Yazı rengi swatch'ları — document delegation ile (storyBgPalette
+    // handler'ıyla BİREBİR AYNI desen, storyTextColorPalette'in içinde)
+    document.addEventListener('click', function (e) {
+        var swatch = e.target.closest('.story-text-color-swatch');
+        if (!swatch || !storyTextColorPalette || storyTextColorPalette.hidden) return;
+        e.preventDefault();
+
+        var color = swatch.dataset.color;
+        if (!color) return;
+
+        // Tüm swatch'ları deselect et
+        storyTextColorPalette.querySelectorAll('.story-text-color-swatch').forEach(function (sw) {
+            sw.classList.remove('selected');
+        });
+        // Bu swatch'ı seçili yap
+        swatch.classList.add('selected');
+
+        // Gizli input'a rengi yaz
+        if (storyTextColorInput) storyTextColorInput.value = color;
+
+        // Canlı önizleme: altyazı widget'ının yazı rengini anında güncelle
+        if (storyTextPreview) storyTextPreview.style.color = color;
     });
 
 
@@ -674,6 +715,11 @@
         viewerCaption.style.left = (captionPosX * 100) + '%';
         viewerCaption.style.top = (captionPosY * 100) + '%';
         viewerCaption.style.transform = 'translate(-50%, -50%)';
+        // Yazı rengi: composer'da seçilen caption_color — viewerCaption AYNI
+        // eleman her showStory() çağrısında yeniden kullanıldığı için, önceki
+        // hikayenin rengi SIZMASIN diye caption_color yoksa boşa (CSS
+        // varsayılanı beyaza) döner, koşulsuz her seferinde yazılır.
+        viewerCaption.style.color = s.caption_color || '';
 
         viewerVideo.pause();
         viewerVideo.hidden = true;
@@ -714,6 +760,10 @@
                 p.style.left = (captionPosX * 100) + '%';
                 p.style.top = (captionPosY * 100) + '%';
                 p.style.transform = 'translate(-50%, -50%)';
+                // Yazı rengi: her seferinde YENİDEN oluşturulan bir <p>, sızma
+                // riski yok — caption_color varsa uygula, yoksa CSS varsayılanı
+                // (beyaz) geçerli kalsın diye hiç dokunma.
+                if (s.caption_color) p.style.color = s.caption_color;
                 textSlide.appendChild(p);
                 mediaArea.insertBefore(textSlide, mediaArea.firstChild);
             }
