@@ -60,6 +60,8 @@
     //   scalable:    (varsayılan true) pinch/wheel ile boyut+döndürme değişsin mi
     //   onChange(state): jest TAMAMLANINCA (parmak(lar) kalkınca) veya wheel'de çağrılır
     //   onTap(state):    (opsiyonel) tek parmakla, ÇOK AZ hareketle biten dokunuş — "düzenle" niyeti
+    //   onActivate(state): (opsiyonel) pointerdown'da HEMEN çağrılır — aktif katman
+    //                    kontrol paneli (Boyut/Döndürme slider'ı) hangi öğeye bağlanacağını bilsin diye
     // }
     function bindDraggable(el, state, options) {
         var pointers = {};
@@ -103,6 +105,7 @@
             moved = 0;
             el.classList.add('is-active');
             if (options.stage) options.stage.appendChild(el); // en üste getir
+            if (options.onActivate) options.onActivate(state);
             snapshot();
         });
 
@@ -175,7 +178,9 @@
     // bindDraggable()'ı kullanır) — bkz. dosya başı yorumu.
     // ------------------------------------------------------------------
 
-    // options: { stage, container, maxLayers, onChange(serialized), onLayerTap(layer) }
+    // options: { stage, container, maxLayers, onChange(serialized), onLayerTap(layer),
+    //            onLayerActivate(layer) — herhangi bir katmana dokunulunca/sürüklenmeye
+    //            başlanınca (aktif katman kontrol paneli — Boyut/Döndürme slider'ı — için) }
     function createEditor(options) {
         var layers = [];
         var maxLayers = options.maxLayers || 10;
@@ -225,6 +230,19 @@
             if (!layer || layer.type !== 'text') return;
             Object.assign(layer, patch);
             renderTextContent(layer);
+            notifyChange();
+        }
+
+        // Aktif katman kontrol paneli (Boyut/Döndürme slider'ı) İÇİN — iki
+        // parmak pinch+rotate masaüstünde YOK, wheel/shift+wheel fallback'i
+        // GÖRÜNMEZ bir jestti (kullanıcı raporu: "web'de çevirme yok" —
+        // aslında ÇALIŞIYORDU, keşfedilemiyordu). Herhangi bir tipteki
+        // katman için scale/rotation'ı DIŞARIDAN (slider) günceller.
+        function updateLayerTransform(id, patch) {
+            var layer = findLayer(id);
+            if (!layer) return;
+            Object.assign(layer, patch);
+            applyTransform(layer.el, layer);
             notifyChange();
         }
 
@@ -295,6 +313,12 @@
                 stage: options.stage,
                 onChange: notifyChange,
                 onTap: function () { if (options.onLayerTap) options.onLayerTap(layer); },
+                // Aktif katman kontrol paneli (Boyut/Döndürme slider'ı) bu
+                // katmana bağlansın diye — dokunulan/tıklanan HER katman
+                // "aktif" sayılır (sürüklemenin başlangıcı da tetikler,
+                // sadece tap değil — Instagram'daki "son dokunulan seçili"
+                // hissi).
+                onActivate: function () { if (options.onLayerActivate) options.onLayerActivate(layer); },
             });
             layers.push(layer);
             notifyChange();
@@ -315,6 +339,7 @@
             removeLayer: removeLayer,
             findLayer: findLayer,
             updateTextLayer: updateTextLayer,
+            updateLayerTransform: updateLayerTransform,
             serialize: serialize,
             count: count,
             canAddMore: canAddMore,

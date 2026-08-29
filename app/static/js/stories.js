@@ -63,6 +63,11 @@
                 if (storyOverlayElementsInput) {
                     storyOverlayElementsInput.value = serialized.length ? JSON.stringify(serialized) : '';
                 }
+                // Aktif katman (× butonuyla) silinmiş olabilir — kontrol
+                // panelini artık VAR OLMAYAN bir katmana bağlı bırakma.
+                if (activeLayerKind === 'layer' && activeLayerId && !storyEditor.findLayer(activeLayerId)) {
+                    clearActiveLayerControl();
+                }
             },
             onLayerTap: function (layer) {
                 if (layer.type !== 'text') return;
@@ -75,6 +80,11 @@
                 }
                 updateTextControlsVisibility();
             },
+            // Kullanıcı raporu: "web'de çevirme yok" — iki parmak pinch+rotate
+            // masaüstünde YOK, wheel/shift+wheel fallback'i tamamen GİZLİ bir
+            // jestti (görsel ipucu yok). Herhangi bir katmana dokunulunca
+            // görünür Boyut/Döndürme slider'ı gösteren panel açılır.
+            onLayerActivate: function (layer) { setActiveLayerControl('layer', layer.id, layer); },
         })
         : null;
 
@@ -94,6 +104,63 @@
                 sw.classList.toggle('selected', sw.dataset.color === currentTextColor);
             });
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Aktif katman kontrol paneli — Boyut/Döndürme slider'ı. Kullanıcı
+    // raporu: "web'de çevirme yok" — iki parmak pinch+rotate masaüstünde
+    // YOK, wheel/shift+wheel fallback'i tamamen GİZLİ bir jestti. Herhangi
+    // bir katmana (metin/GIF-sticker/mention/hashtag/anket) dokununca bu
+    // panel açılır ve o katmanın scale/rotation'ını GÖRÜNÜR şekilde kontrol
+    // eder — wheel fallback'i de aynen çalışmaya devam eder (ikisi AYNI
+    // state'i günceller).
+    var storyLayerControls = document.getElementById('story-layer-controls');
+    var storyLayerScaleSlider = document.getElementById('story-layer-scale-slider');
+    var storyLayerRotationSlider = document.getElementById('story-layer-rotation-slider');
+    var activeLayerKind = null; // 'layer' | 'poll' | null
+    var activeLayerId = null;
+
+    function setActiveLayerControl(kind, id, state) {
+        activeLayerKind = kind;
+        activeLayerId = id;
+        if (storyLayerControls) storyLayerControls.hidden = false;
+        if (storyLayerScaleSlider) storyLayerScaleSlider.value = state.scale;
+        if (storyLayerRotationSlider) storyLayerRotationSlider.value = state.rotation;
+    }
+
+    function clearActiveLayerControl() {
+        activeLayerKind = null;
+        activeLayerId = null;
+        if (storyLayerControls) storyLayerControls.hidden = true;
+    }
+
+    function applyActiveLayerPatch(patch) {
+        if (activeLayerKind === 'poll') {
+            Object.assign(pollState, patch);
+            if (storyPollPreviewWidget) window.StoryLayers.applyTransform(storyPollPreviewWidget, pollState);
+            syncPollHiddenInputs();
+        } else if (activeLayerKind === 'layer' && activeLayerId && storyEditor) {
+            var stillExists = storyEditor.findLayer(activeLayerId);
+            if (!stillExists) { clearActiveLayerControl(); return; }
+            storyEditor.updateLayerTransform(activeLayerId, patch);
+        }
+    }
+
+    if (storyLayerScaleSlider) {
+        storyLayerScaleSlider.addEventListener('input', function (e) {
+            applyActiveLayerPatch({ scale: window.StoryLayers.clampScale(parseFloat(e.target.value)) });
+        });
+    }
+    if (storyLayerRotationSlider) {
+        storyLayerRotationSlider.addEventListener('input', function (e) {
+            applyActiveLayerPatch({ rotation: parseFloat(e.target.value) });
+        });
+    }
+    // Boş canvas alanına (bir katmanın DIŞINA) dokununca paneli kapat.
+    if (storyMediaPreviewInner) {
+        storyMediaPreviewInner.addEventListener('pointerdown', function (e) {
+            if (e.target === storyMediaPreviewInner) clearActiveLayerControl();
+        });
     }
 
     function openStoryModal() {
@@ -127,6 +194,7 @@
         if (storyTextColorPalette) storyTextColorPalette.hidden = true;
         if (storyTextStyleBtn) storyTextStyleBtn.hidden = true;
         resetPollState();
+        clearActiveLayerControl();
         closeAllStoryPickerPanels();
         if (storyGifSearchInput) storyGifSearchInput.value = '';
         if (storyGifResults) storyGifResults.innerHTML = '';
@@ -223,10 +291,14 @@
         if (activeTextLayerId === null) {
             if (value.trim()) {
                 var newLayer = storyEditor.addLayer('text', { text: value, style: currentTextStyle, color: currentTextColor });
-                if (newLayer) activeTextLayerId = newLayer.id;
+                if (newLayer) {
+                    activeTextLayerId = newLayer.id;
+                    setActiveLayerControl('layer', newLayer.id, newLayer);
+                }
             }
         } else if (!value.trim()) {
             storyEditor.removeLayer(activeTextLayerId);
+            if (activeLayerId === activeTextLayerId) clearActiveLayerControl();
             activeTextLayerId = null;
         } else {
             storyEditor.updateTextLayer(activeTextLayerId, { text: value });
@@ -306,6 +378,7 @@
         window.StoryLayers.bindDraggable(storyPollPreviewWidget, pollState, {
             container: storyMediaPreviewWrapEl,
             onChange: syncPollHiddenInputs,
+            onActivate: function () { setActiveLayerControl('poll', null, pollState); },
         });
     }
 
@@ -516,7 +589,11 @@
 
     function tryAddLayer(type, data) {
         if (!storyEditor || !storyEditor.canAddMore()) return null;
-        return storyEditor.addLayer(type, data);
+        var layer = storyEditor.addLayer(type, data);
+        // Yeni eklenen katman HENÜZ dokunulmadığı için onActivate tetiklenmez —
+        // kullanıcı ekler eklemez Boyut/Döndürme panelini görsün diye elle açılır.
+        if (layer) setActiveLayerControl('layer', layer.id, layer);
+        return layer;
     }
 
     // --- GIF ---

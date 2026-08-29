@@ -2385,6 +2385,21 @@ img.story-overlay-layer { width: 120px; height: auto; }
 .story-hashtag-input-row { display: flex; gap: 8px; }
 .story-hashtag-input-row input { flex: 1; }
 
+/* Aktif katman kontrol paneli — Boyut/Döndürme slider'ı, dokunulan/
+   sürüklenen HERHANGİ bir katman (metin/GIF-sticker/mention/hashtag/anket)
+   için görünür olur (bkz. stories.js setActiveLayerControl). İki parmak
+   pinch+rotate masaüstünde YOK, wheel/shift+wheel fallback'i GİZLİ bir
+   jestti — kullanıcı raporu ("web'de çevirme yok") burada çözülüyor. */
+.story-layer-controls {
+    display: flex; gap: 16px; padding: 8px 10px; margin: 4px 0;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.story-layer-controls[hidden] { display: none; }
+.story-layer-controls label {
+    display: flex; align-items: center; gap: 8px; flex: 1; color: var(--muted);
+}
+.story-layer-controls input[type="range"] { flex: 1; cursor: pointer; }
+
 /* Salt-metin hikaye görüntüleyicide — .story-media-area içinde. Dış div tam
    ekranı kaplayan arkaplan renkli konteyner olarak kalır; içindeki <p> artık
    anket/caption widget'ıyla AYNI teknikle (position:absolute + left/top %)

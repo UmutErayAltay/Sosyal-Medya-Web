@@ -413,6 +413,23 @@
                 </div>
             </div>
 
+            {# Aktif katman kontrol paneli — kullanıcı raporu: "web'de
+               çevirme yok". İki parmak pinch+rotate masaüstünde YOK,
+               wheel/shift+wheel fallback'i GİZLİ bir jestti; herhangi bir
+               katmana (metin/GIF-sticker/mention/hashtag/anket) dokununca
+               bu panel açılıp GÖRÜNÜR bir Boyut/Döndürme kontrolü sunuyor
+               (bkz. stories.js setActiveLayerControl). #}
+            <div id="story-layer-controls" class="story-layer-controls" hidden>
+                <label>{{ icons.icon('grid', size=14) }}
+                    <span class="sr-only">Boyut</span>
+                    <input type="range" id="story-layer-scale-slider" min="0.3" max="3" step="0.05" value="1">
+                </label>
+                <label>{{ icons.icon('repeat', size=14) }}
+                    <span class="sr-only">Döndürme</span>
+                    <input type="range" id="story-layer-rotation-slider" min="-180" max="180" step="1" value="0">
+                </label>
+            </div>
+
             {# Butonlar en altta, tam genişlikte — ikon-sadece dairesel araç
                çubuğu (bkz. style.css .story-attach-label yorumu), metin
                `title` (hover tooltip) + `.sr-only` (ekran okuyucu) olarak
