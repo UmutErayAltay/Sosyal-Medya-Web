@@ -7,6 +7,7 @@ var, hikayeyi ayrı bir "hafif ve hızlı" özellik olarak tutmak için kapsam
 dışı bırakıldı.
 """
 from datetime import datetime, timezone
+import json
 import re
 from flask import Blueprint, request, redirect, url_for, session, flash, jsonify
 from .decorators import login_required
@@ -14,12 +15,20 @@ from .supabase_client import get_sb, retry_on_connection_error
 from .storage_helper import upload_image, upload_video
 from .blocks import is_blocked_either_way
 from .messaging._common import _get_or_create_conversation, _notify_conversation
+from .mentions import notify_story_mention
 from .polls import create_poll
 from .visibility import followed_and_self_ids
 
 bp = Blueprint("stories", __name__)
 
 _last_cleanup = 0.0
+
+# Bir hikayeye eklenebilecek TOPLAM overlay eleman sayısı (tip fark etmeksizin:
+# text + image + mention + hashtag toplamı) — 2026-08 öncesi 3'tü, çoklu metin
+# katmanı özelliğiyle (metin de artık bir overlay elemanı) 10'a çıkarıldı.
+MAX_OVERLAY_ELEMENTS = 10
+
+_HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?")
 
 
 def _cleanup_expired_stories(sb) -> None:
@@ -55,13 +64,26 @@ def attach_story_poll(sb, story: dict, me: str) -> None:
         return
 
     try:
-        poll = sb.table("polls").select("id, position_x, position_y, scale").eq("story_id", story["id"]).execute().data
+        try:
+            poll = sb.table("polls").select(
+                "id, position_x, position_y, scale, rotation"
+            ).eq("story_id", story["id"]).execute().data
+        except Exception:
+            # sql/migration_story_overlay_rotation.sql henüz uygulanmamışsa
+            # `rotation` kolonu yoktur — bu SELECT'i istisnasız yutan dıştaki
+            # try/except'e düşerse anket TAMAMEN kaybolurdu (story["poll"]
+            # None kalır). create_poll()'daki AYNI "eski kolonlarla fallback"
+            # deseni burada da: rotation'sız tekrar dene, varsayılan 0 kullan.
+            poll = sb.table("polls").select(
+                "id, position_x, position_y, scale"
+            ).eq("story_id", story["id"]).execute().data
         if not poll:
             return
         poll_id = poll[0]["id"]
         position_x = poll[0].get("position_x", 0.5)
         position_y = poll[0].get("position_y", 0.75)
         scale = poll[0].get("scale", 1.0)
+        rotation = poll[0].get("rotation", 0.0)
 
         options = sb.table("poll_options").select("id, option_text, position").eq(
             "poll_id", poll_id
@@ -88,9 +110,155 @@ def attach_story_poll(sb, story: dict, me: str) -> None:
         story["poll"] = {
             "id": poll_id, "options": opt_list, "total_votes": total, "my_vote": my_vote,
             "position_x": position_x, "position_y": position_y, "scale": scale,
+            "rotation": rotation,
         }
     except Exception:
         pass
+
+
+def parse_overlay_elements(sb, raw: str | None, me: str) -> tuple[list[dict], set[str]]:
+    """Hikaye canvas'ına eklenen katmanları (metin/GIF-sticker/mention/hashtag)
+    doğrular. `raw`, JSON-encoded string olarak gelen `overlay_elements` form
+    alanı (multipart form'da dizi taşımanın standart yolu). Web (`create_story`)
+    ve native (`api_create_story`) route'ları AYNI bu fonksiyonu çağırır —
+    eskiden mantık SADECE api_v1/stories.py'de vardı, web hiç okumuyordu.
+
+    Döner: (elements, story_mention_recipient_ids). `story_mention_recipient_ids`
+    çağıran route tarafından insert SONRASI `notify_story_mention()` ile
+    bildirime çevrilmeli (poll ile AYNI "önce insert, sonra yan etki" sırası).
+
+    Dekoratif/kritik-olmayan bir özellik olduğu için bozuk JSON veya geçersiz
+    bir eleman TÜM isteği ERROR ETMEZ (400 yok) — poll_scale parse fallback'iyle
+    AYNI fail-open felsefesi: sessizce atlanır/normalize edilir. Her eleman
+    `type`'a göre ayrı doğrulanır, TÜR FARK ETMEKSİZİN toplam en fazla
+    MAX_OVERLAY_ELEMENTS elemanla sınırlanır. Boş liste DEĞİL None saklanır
+    ("yokluk = render etme" kontratı) — çağıran bunu `elements or None` ile yapar.
+    """
+    elements: list[dict] = []
+    story_mention_recipient_ids: set = set()
+    if not raw:
+        return elements, story_mention_recipient_ids
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        parsed = []
+    if not isinstance(parsed, list):
+        return elements, story_mention_recipient_ids
+
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+
+        elem_type = item.get("type")
+        if elem_type not in ("text", "image", "mention", "hashtag"):
+            # type alanı yoksa ama url varsa eski (type'sız) format —
+            # geriye dönük uyumluluk için image say.
+            elem_type = "image" if isinstance(item.get("url"), str) else None
+        if elem_type is None:
+            continue
+
+        try:
+            position_x = float(item.get("position_x", 0.5))
+            if not (0 <= position_x <= 1):
+                position_x = 0.5
+        except (TypeError, ValueError):
+            position_x = 0.5
+
+        try:
+            position_y = float(item.get("position_y", 0.5))
+            if not (0 <= position_y <= 1):
+                position_y = 0.5
+        except (TypeError, ValueError):
+            position_y = 0.5
+
+        try:
+            scale = float(item.get("scale", 1.0))
+            if not (0.3 <= scale <= 3):
+                scale = 1.0
+        except (TypeError, ValueError):
+            scale = 1.0
+
+        # rotation: diğer sayısal alanlarla AYNI fail-open desen, ama
+        # reddetmek yerine 360'a göre NORMALİZE edilir (bir dokunuş fazla
+        # döndürmek geçersiz bir değer değil, sadece bir tur fazla).
+        try:
+            rotation = float(item.get("rotation", 0.0)) % 360.0
+        except (TypeError, ValueError):
+            rotation = 0.0
+
+        if elem_type == "text":
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            text = text.strip()[:500]
+
+            # style: caption_style ile AYNI doğrulama (yalnızca bu iki değer).
+            style = item.get("style")
+            if style not in ("pill_light", "pill_dark"):
+                style = None
+
+            # color: caption_color/background_color ile AYNI serbest hex regex.
+            color = item.get("color")
+            if not (isinstance(color, str) and _HEX_COLOR_RE.fullmatch(color)):
+                color = None
+
+            elements.append({
+                "type": "text", "text": text, "style": style, "color": color,
+                "position_x": position_x, "position_y": position_y,
+                "scale": scale, "rotation": rotation,
+            })
+        elif elem_type == "image":
+            url = item.get("url")
+            if not isinstance(url, str) or not url.strip():
+                continue
+            elements.append({
+                "type": "image", "url": url.strip(),
+                "position_x": position_x, "position_y": position_y,
+                "scale": scale, "rotation": rotation,
+            })
+        elif elem_type == "mention":
+            uname = item.get("username")
+            if not isinstance(uname, str) or not uname.strip():
+                continue
+            # notify_mentions()'daki AYNI case-insensitive doğrulama — var
+            # olmayan kullanıcıya işaret eden sticker SESSİZCE atlanır.
+            try:
+                prof = sb.table("profiles").select("id, username").ilike(
+                    "username", uname.strip()
+                ).execute().data
+            except Exception:
+                prof = []
+            if not prof:
+                continue
+            real_username = prof[0]["username"]
+            mentioned_id = prof[0]["id"]
+            elements.append({
+                "type": "mention", "username": real_username,
+                "position_x": position_x, "position_y": position_y,
+                "scale": scale, "rotation": rotation,
+            })
+            if mentioned_id != me:
+                story_mention_recipient_ids.add(mentioned_id)
+        elif elem_type == "hashtag":
+            tag = item.get("tag")
+            if not isinstance(tag, str):
+                continue
+            # extract_hashtags() ile AYNI normalizasyon (küçük harf); baştaki
+            # '#' client'tan gelmiş olabilir, saklanmaz.
+            tag = tag.strip().lstrip("#").lower()
+            if not tag:
+                continue
+            elements.append({
+                "type": "hashtag", "tag": tag,
+                "position_x": position_x, "position_y": position_y,
+                "scale": scale, "rotation": rotation,
+            })
+
+        if len(elements) >= MAX_OVERLAY_ELEMENTS:
+            break
+
+    return elements, story_mention_recipient_ids
 
 
 def _visible_story_filter(sb, me: str, rows: list[dict]) -> list[dict]:
@@ -195,8 +363,25 @@ def active_stories_bar(sb, me: str, blocked_ids: set) -> list[dict]:
 @login_required
 @retry_on_connection_error
 def create_story():
+    """Web hikaye oluşturma — `POST /api/v1/stories` (api_create_story) ile
+    AYNI `parse_overlay_elements()` yardımcısını paylaşır (bkz. o fonksiyonun
+    docstring'i). `overlay_elements` (çoklu metin/GIF-sticker/mention/hashtag
+    katmanı, JSON-encoded form alanı) ve `caption_style` bu route'ta İLK KEZ
+    okunuyor — eskiden SADECE api_v1'de vardı, web hiç desteklemiyordu.
+
+    Yanıt: `X-Requested-With: fetch` header'ı varsa JSON (yeni katman editörü
+    composer'ı için — `delete_story()`'deki AYNI desen), aksi halde eski
+    redirect+flash (JS'siz form-POST fallback'i BOZULMADAN kalır)."""
     sb = get_sb()
     me = session["user"]["id"]
+    wants_json = request.headers.get("X-Requested-With") == "fetch"
+
+    def _fail(message: str, status: int = 400):
+        if wants_json:
+            return jsonify(error=message), status
+        flash(message, "error")
+        return redirect(url_for("routes.feed"))
+
     caption = request.form.get("caption", "").strip()
     image_file = request.files.get("image")
     video_file = request.files.get("video")
@@ -208,10 +393,11 @@ def create_story():
     poll_options = [o for o in poll_options_raw if o]
     has_poll = len(poll_options) >= 2
 
-    # Hikaye anketinin sürükle-bırak pozisyon ve boyut değerleri
+    # Hikaye anketinin sürükle-bırak pozisyon, boyut ve döndürme değerleri
     poll_position_x = 0.5
     poll_position_y = 0.75
     poll_scale = 1.0
+    poll_rotation = 0.0
     if has_poll:
         try:
             x_raw = request.form.get("poll_position_x", "0.5")
@@ -237,8 +423,17 @@ def create_story():
         except ValueError:
             poll_scale = 1.0
 
+        try:
+            poll_rotation = float(request.form.get("poll_rotation", "0.0")) % 360.0
+        except ValueError:
+            poll_rotation = 0.0
+
     # Hikaye altyazısının sürükle-bırak pozisyonu (anket ile AYNI desen) —
-    # has_poll'a bağlı DEĞİL, altyazı her hikayede sürüklenebilir olmalı
+    # has_poll'a bağlı DEĞİL, altyazı her hikayede sürüklenebilir olmalı.
+    # NOT: bu üç alan (caption_position/style) artık SADECE göç etmemiş eski
+    # satırlar ve `overlay_elements` içinde hiç "text" elemanı olmayan geçiş
+    # dönemi istekleri için anlamlı — yeni composer metni overlay_elements
+    # üzerinden gönderir (bkz. aşağıdaki türetilmiş caption mantığı).
     caption_position_x = 0.5
     try:
         cpx_raw = request.form.get("caption_position_x", "0.5")
@@ -257,9 +452,20 @@ def create_story():
     except ValueError:
         caption_position_y = 0.75
 
-    if not caption and not has_image and not has_video and not has_poll:
-        flash("Boş hikaye paylaşılamaz.", "error")
-        return redirect(url_for("routes.feed"))
+    # Altyazı render stili (hap-şekilli arka plan) — api_v1/stories.py'deki
+    # AYNI doğrulama, web'de İLK KEZ okunuyor.
+    caption_style = (request.form.get("caption_style") or "").strip()
+    if caption_style not in ("pill_light", "pill_dark"):
+        caption_style = None
+
+    # Overlay katmanları (metin/GIF-sticker/mention/hashtag) — paylaşılan
+    # parser, api_create_story()'nin BİREBİR aynısı.
+    overlay_elements, story_mention_recipient_ids = parse_overlay_elements(
+        sb, request.form.get("overlay_elements"), me,
+    )
+
+    if not caption and not has_image and not has_video and not has_poll and not overlay_elements:
+        return _fail("Boş hikaye paylaşılamaz.")
 
     # Hikaye tek medyalı (post'un aksine) — basitlik için: görsel + video
     # aynı anda desteklenmiyor, ilk bulunan kullanılır.
@@ -268,13 +474,11 @@ def create_story():
     if has_image:
         image_url = upload_image(image_file, folder="stories")
         if not image_url:
-            flash("Görsel yüklenemedi (geçersiz format veya 5MB'tan büyük).", "error")
-            return redirect(url_for("routes.feed"))
+            return _fail("Görsel yüklenemedi (geçersiz format veya 5MB'tan büyük).")
     elif has_video:
         video_url = upload_video(video_file, folder="stories")
         if not video_url:
-            flash("Video yüklenemedi (geçersiz format veya 25MB'tan büyük).", "error")
-            return redirect(url_for("routes.feed"))
+            return _fail("Video yüklenemedi (geçersiz format veya 25MB'tan büyük).")
 
     # background_color ve visibility alanlarını oku
     background_color = request.form.get("background_color", "").strip()
@@ -297,6 +501,17 @@ def create_story():
     if visibility not in ("public", "followers", "close_friends"):
         visibility = "public"
 
+    # `caption` sütunu türetilir: istemci boş gönderip overlay_elements içinde
+    # "text" katman(lar)ı VARSA, o katmanların metni "\n" ile birleştirilip
+    # caption'a yazılır — story_archive()/storyArchive.js/save_highlight()
+    # hâlâ düz `caption`'ı okuyor, çoklu metin katmanı özelliğiyle onlar
+    # BOZULMASIN diye (bkz. sql/migration_story_text_overlay_elements.sql
+    # dosya başı yorumu, AYNI gerekçe).
+    if not caption and overlay_elements:
+        text_parts = [el["text"] for el in overlay_elements if el["type"] == "text"]
+        if text_parts:
+            caption = "\n".join(text_parts)
+
     # Insert ve anket AYRI try bloklarında — önceki tek blokta, insert
     # BAŞARILI olup anket patlarsa fallback hikayeyi İKİNCİ kez insert
     # ederdi (duplikat). Fallback sadece insert'in kendisi patlarsa
@@ -305,7 +520,9 @@ def create_story():
         "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
         "background_color": background_color, "visibility": visibility,
         "caption_position_x": caption_position_x, "caption_position_y": caption_position_y,
+        "caption_style": caption_style,
         "caption_color": caption_color,
+        "overlay_elements": overlay_elements or None,
     }
     try:
         result = sb.table("stories").insert(story_data).execute()
@@ -316,18 +533,28 @@ def create_story():
             }
             result = sb.table("stories").insert(story_data_legacy).execute()
         except Exception:
-            flash("Hikaye paylaşılamadı (özellik henüz aktif değil).", "error")
-            return redirect(url_for("routes.feed"))
+            return _fail("Hikaye paylaşılamadı (özellik henüz aktif değil).")
 
     story_id = result.data[0]["id"] if result.data else None
     if story_id and has_poll:
         try:
             create_poll(sb, poll_options, story_id=story_id,
-                        position_x=poll_position_x, position_y=poll_position_y, scale=poll_scale)
+                        position_x=poll_position_x, position_y=poll_position_y,
+                        scale=poll_scale, rotation=poll_rotation)
         except Exception:
-            flash("Hikaye paylaşıldı ama anket eklenemedi.", "error")
-            return redirect(url_for("routes.feed"))
+            return _fail("Hikaye paylaşıldı ama anket eklenemedi.")
 
+    # @mention sticker bildirimleri — insert SONRASI (poll ile AYNI sıra),
+    # hikaye paylaşımını ASLA bloklamaz (dekoratif yan etki).
+    if story_id and story_mention_recipient_ids:
+        try:
+            for recipient_id in story_mention_recipient_ids:
+                notify_story_mention(sb, actor_id=me, recipient_id=recipient_id)
+        except Exception:
+            pass
+
+    if wants_json:
+        return jsonify(ok=True, story_id=story_id)
     flash("Hikaye paylaşıldı.", "success")
     return redirect(url_for("routes.feed"))
 
@@ -352,12 +579,11 @@ def user_stories(user_id):
         # user_id select'te ŞART: _visible_story_filter r["user_id"] okur —
         # eksikse close_friends hikayesinde KeyError (500) + sahibi kendi
         # hikayesini göremezdi
-        # overlay_elements (ÇOKLU sticker: görsel/mention/hashtag, jsonb dizi)
-        # ve caption_style kolonları da select edilir — web'de bu özellikleri
-        # set eden bir UI YOK (sadece native tarafında var), ama native'in
-        # oluşturduğu bir hikaye web'de görüntülenirse JSON'da eksik/tutarsız
-        # kalmasın diye SELECT'e eklendi (INSERT'e DOKUNULMADI, web formunda
-        # bu alanlar yok zaten null gelir).
+        # overlay_elements (ÇOKLU metin/GIF-sticker/mention/hashtag, jsonb
+        # dizi) ve caption_style kolonları da select edilir — web composer'ı
+        # artık bu alanları kendisi de yazıyor (bkz. create_story()
+        # parse_overlay_elements çağrısı), native'in oluşturduğu bir hikaye
+        # de aynı SELECT'ten aynı şekilde gelir.
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, visibility, background_color, "
             "caption_position_x, caption_position_y, caption_style, caption_color, overlay_elements"
@@ -404,9 +630,14 @@ def story_archive():
     me = session["user"]["id"]
     now = datetime.now(timezone.utc).isoformat()
     try:
+        # overlay_elements SELECT'e dahil — aksi halde çoklu metin katmanlı
+        # hikayelerin metni arşivde kaybolurdu (bkz. sql/migration_story_
+        # text_overlay_elements.sql'in "caption sütunu korunur" notu: yalnızca
+        # HİÇ text katmanı yoksa arşiv düz caption'a güvenebilir).
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
-            "background_color, caption_position_x, caption_position_y, caption_style, caption_color"
+            "background_color, caption_position_x, caption_position_y, caption_style, caption_color, "
+            "overlay_elements"
         ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
     except Exception:
         rows = []

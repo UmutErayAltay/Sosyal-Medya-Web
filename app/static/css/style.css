@@ -2026,7 +2026,7 @@ body.navbar-hidden .post-detail-sidebar { top: 16px; }
 
 /* Hikaye ekleme modalı — görsel/video butonları (attach-menu'nun dropdown
    bağlamı dışında, doğrudan modal içinde görünür) */
-.story-attach-row { display: flex; gap: 12px; }
+.story-attach-row { display: flex; gap: 12px; flex-wrap: wrap; }
 .story-attach-label {
     display: inline-flex; align-items: center; gap: 6px;
     background: var(--border); color: var(--text); border-radius: 999px;
@@ -2283,25 +2283,91 @@ body.navbar-hidden .post-detail-sidebar { top: 16px; }
 .story-visibility-item:hover { background: var(--border); }
 .story-visibility-item.selected { font-weight: 600; }
 
-/* Altyazı önizleme widget'ı — story-media-preview-inner içinde, anket
-   widget'ıyla (.story-poll-preview-widget) AYNI sürüklenebilir desen.
-   Medya olsun olmasın caption YAZILDIĞINDA görünür (stories.js input
-   listener'ı kontrol eder); önceden TAM kutuyu kaplayan sabit-konum flex
-   kutuydu (sadece medyasız salt-metin modunda), artık kendi boyutunda
-   serbestçe konumlanan bir kutu (kullanıcı isteği: "sağda önizlemede
-   gözüküyor, anket gibi yerini seçebilelim"). */
-#story-text-preview {
-    position: absolute; cursor: move; touch-action: none;
-    max-width: 80%;
-    color: var(--color-white);
-    font-size: 28px;
-    text-align: center;
-    word-break: break-word;
-    line-height: 1.4;
-    text-shadow: 0 1px 3px rgba(43, 36, 32, 0.6);
-    /* Konum JS'den (initStoryCaptionWidget/pointermove) gelir */
+/* Çoklu katman editörü (storyLayers.js) — composer'da sürüklenebilir/
+   pinch+rotate edilebilir TEK bir katman (metin/GIF-sticker/mention/hashtag).
+   Eskiden #story-text-preview TEK bir sabit ID'ydi (tekil caption) — çoklu
+   katman artık tek bir ID'ye SIĞMAZ, bu yüzden class'a çevrildi (kullanıcı
+   raporu: "storye metin eklediğimizde sadece 1 tane ekliyor"). */
+.story-layer {
+    position: absolute; cursor: move; touch-action: none; user-select: none;
+    /* left/top/transform storyLayers.js::applyTransform() tarafından yazılır */
 }
-#story-text-preview[hidden] { display: none; }
+.story-layer.is-active { outline: 1px dashed rgba(255, 255, 255, 0.8); outline-offset: 4px; }
+.story-layer-remove {
+    position: absolute; top: -10px; right: -10px; width: 22px; height: 22px;
+    border-radius: 50%; border: none; background: rgba(43, 36, 32, 0.7);
+    color: var(--color-white); font-size: 14px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; z-index: 1;
+}
+.story-layer-image .story-layer-content { width: 120px; height: auto; display: block; }
+
+/* Metin katmanının içeriği — composer (.story-layer-text-content) VE viewer
+   (.story-overlay-layer.story-layer-text-content) AYNI class'ı paylaşır,
+   gerçek WYSIWYG (eski #story-text-preview'la BİREBİR aynı temel boyutlar,
+   420px referansta SABİT px — .story-media-preview-inner 420px, .story-viewer
+   max-width 420px, `%`/`vw` olsaydı iki yüzey arasında kayardı). */
+.story-layer-text-content {
+    max-width: 80%; margin: 0;
+    color: var(--color-white);
+    font-size: 28px; text-align: center; word-break: break-word; line-height: 1.4;
+    text-shadow: 0 1px 3px rgba(43, 36, 32, 0.6);
+}
+.story-layer-text-content.pill-light {
+    background: rgba(255, 255, 255, 0.92); color: #000;
+    border-radius: 999px; padding: 6px 14px; text-shadow: none; display: inline-block;
+}
+.story-layer-text-content.pill-dark {
+    background: rgba(0, 0, 0, 0.6); color: var(--color-white);
+    border-radius: 999px; padding: 6px 14px; text-shadow: none; display: inline-block;
+}
+
+/* Mention/hashtag sticker pili — composer önizlemesi VE viewer AYNI görünüm. */
+.story-sticker-pill {
+    display: inline-block; background: var(--primary); color: var(--color-white);
+    border-radius: 999px; padding: 8px 16px; font-size: 15px; font-weight: 600;
+    text-decoration: none; white-space: nowrap;
+}
+a.story-sticker-pill { cursor: pointer; }
+
+/* Görüntüleyicideki dinamik katmanlar — .story-nav-zone'un (z-index:1)
+   ÜSTÜNDE, .story-poll-widget'ın (z-index:10) ALTINDA. Metin/GIF dekoratif
+   (pointer-events:none, JS'de uygulanır — dokun-ilerlet bölgelerinin üstünde
+   olduklarından tıklanabilir olsalardı hikaye ilerletme ÖLÜRDÜ), SADECE
+   mention/hashtag (<a>) tıklanabilir kalır. */
+.story-overlay-layer { position: absolute; z-index: 6; }
+
+/* GIF/sticker/mention/hashtag seçim panelleri — .story-bg-palette/
+   .sticker-picker ile AYNI "toggle butonunun altında açılan basit panel"
+   deseni, sekmesiz (native MediaPickerSheet'in web'deki basitleştirilmiş
+   karşılığı). */
+.story-picker-panel {
+    display: flex; flex-direction: column; gap: 8px; padding: 10px;
+    margin: 4px 0; background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); max-height: 260px; overflow-y: auto;
+}
+.story-picker-panel[hidden] { display: none; }
+.story-picker-panel input[type="text"] {
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    font-size: 14px; background: var(--bg); color: var(--text);
+}
+.story-picker-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.story-picker-grid img {
+    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+    cursor: pointer; border: none; background: var(--border);
+}
+.story-picker-grid img:hover { opacity: 0.85; }
+.story-picker-list { display: flex; flex-direction: column; gap: 4px; }
+.story-picker-list-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--text);
+    background: none; border: none; text-align: left; width: 100%; font-family: inherit;
+}
+.story-picker-list-item:hover { background: var(--border); }
+.story-picker-list-item img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.story-hashtag-input-row { display: flex; gap: 8px; }
+.story-hashtag-input-row input { flex: 1; }
 
 /* Salt-metin hikaye görüntüleyicide — .story-media-area içinde. Dış div tam
    ekranı kaplayan arkaplan renkli konteyner olarak kalır; içindeki <p> artık

@@ -14,7 +14,6 @@ tablo KULLANMAZ — web ile AYNI şekilde birer DM mesajı olarak
 `_get_or_create_conversation`/`_notify_conversation` (app/messaging/_common.py)
 ile kaydedilir.
 """
-import json
 import re
 from datetime import datetime, timezone
 
@@ -33,6 +32,7 @@ from ..stories import (
     attach_story_poll,
     _visible_story_filter,
     _get_highlights,
+    parse_overlay_elements,
 )
 
 
@@ -55,31 +55,30 @@ def api_stories_bar():
 @bp.route("/stories", methods=["POST"])
 @api_login_required
 def api_create_story():
-    """Yeni hikaye — create_story()'nin AYNI mantığı, multipart/form-data
-    (görsel/video içerdiği için JSON değil). Alanlar: `caption`, `image`
-    VEYA `video` (tek biri, ikisi de gönderilirse image kazanır),
-    `poll_option_1..4`, `poll_position_x/y`, `poll_scale`,
-    `caption_position_x/y`, `caption_style` (opsiyonel, tam olarak
-    "pill_light"/"pill_dark" — geçersiz/boşsa sessizce null'a düşer, render
-    tamamen client-side), `caption_color` (opsiyonel, herhangi bir geçerli
-    hex renk — background_color ile AYNI serbest regex, whitelist YOK;
-    background_color'ın aksine medya varlığından BAĞIMSIZ, yazının rengini
-    belirtir), `background_color` (medya varsa yok sayılır),
-    `visibility` (public/followers/close_friends, varsayılan public),
-    `overlay_elements` (ÇOKLU sticker — JSON-ENCODED STRING, dizi, en fazla
-    3 eleman TOPLAM, `type` alanına göre 3 şekilden biri:
-    `{"type":"image","url":...,"position_x":...,"position_y":...,"scale":...}`
-    (dosya YÜKLEMESİ değil, gif_url'deki (interactions.py) AYNI güven
-    seviyesiyle client'tan olduğu gibi kabul edilir; `type` YOKSA ama `url`
-    VARSA geriye dönük uyumluluk için image sayılır),
-    `{"type":"mention","username":...,"position_x":...,"position_y":...,"scale":...}`
-    (username `profiles`'ta case-insensitive doğrulanır, bulunamazsa eleman
-    SESSİZCE atlanır; bulunursa etiketlenen kullanıcıya "story_mention"
-    bildirimi gider — kendine etiket HARİÇ),
-    `{"type":"hashtag","tag":...,"position_x":...,"position_y":...,"scale":...}`
-    (baştaki '#' ve büyük/küçük harf normalize edilir, `extract_hashtags()`
-    ile AYNI kural — var olmayan bir etiket REDDEDİLMEZ, yeni oluşturulabilir
-    bir sticker olduğu için hashtags tablosuna dokunulmaz))."""
+    """Yeni hikaye — create_story()'nin (`app/stories.py`) AYNI mantığı,
+    multipart/form-data (görsel/video içerdiği için JSON değil). İkisi de
+    `..stories.parse_overlay_elements()`'i çağırır — mantık tek yerde.
+
+    Alanlar: `caption` (opsiyonel — boşsa VE `overlay_elements` içinde "text"
+    katman(lar)ı varsa, backend caption'ı o katmanların metninden türetir,
+    bkz. aşağıdaki türetilmiş caption bloğu), `image` VEYA `video` (tek biri,
+    ikisi de gönderilirse image kazanır), `poll_option_1..4`,
+    `poll_position_x/y`, `poll_scale`, `poll_rotation` (derece, `%360`
+    normalize), `caption_position_x/y`, `caption_style` (opsiyonel, tam
+    olarak "pill_light"/"pill_dark" — geçersiz/boşsa sessizce null'a düşer;
+    bu üç `caption_*` alanı artık SADECE geçiş dönemi/eski istemciler için
+    anlamlı, yeni istemci metni `overlay_elements` üzerinden gönderir),
+    `caption_color` (opsiyonel, herhangi bir geçerli hex renk),
+    `background_color` (medya varsa yok sayılır), `visibility`
+    (public/followers/close_friends, varsayılan public), `overlay_elements`
+    (ÇOKLU katman — JSON-ENCODED STRING, dizi, en fazla
+    `stories.MAX_OVERLAY_ELEMENTS` (10) eleman TOPLAM, `type` alanına göre
+    4 şekilden biri — tam alan sözleşmesi ve doğrulama kuralları için bkz.
+    `app/stories.py::parse_overlay_elements` docstring'i:
+    `{"type":"text","text":...,"style":...,"color":...,"position_x":...,"position_y":...,"scale":...,"rotation":...}`,
+    `{"type":"image","url":...,...}`,
+    `{"type":"mention","username":...,...}`,
+    `{"type":"hashtag","tag":...,...}`)."""
     sb = get_sb()
     me = request.api_user["id"]
     caption = (request.form.get("caption") or "").strip()
@@ -95,6 +94,7 @@ def api_create_story():
     poll_position_x = 0.5
     poll_position_y = 0.75
     poll_scale = 1.0
+    poll_rotation = 0.0
     if has_poll:
         try:
             poll_position_x = float(request.form.get("poll_position_x", "0.5"))
@@ -116,6 +116,11 @@ def api_create_story():
                 poll_scale = 1.0
         except ValueError:
             poll_scale = 1.0
+
+        try:
+            poll_rotation = float(request.form.get("poll_rotation", "0.0")) % 360.0
+        except ValueError:
+            poll_rotation = 0.0
 
     caption_position_x = 0.5
     try:
@@ -150,113 +155,11 @@ def api_create_story():
     if caption_color and not re.fullmatch(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?", caption_color):
         caption_color = None
 
-    # Overlay sticker'ları (görsel/GIF, @mention, #hashtag — ÇOKLU) — tek
-    # `overlay_elements` alanı, JSON-encoded string olarak gelir (multipart
-    # form'da dizi/nesne taşımanın standart yolu). Dekoratif/kritik-olmayan
-    # bir özellik olduğu için bozuk JSON tüm isteği ERROR ETMEZ, poll_scale
-    # parse fallback'iyle AYNI fail-open felsefesi: sessizce boş listeye
-    # düşer. Her eleman `type`'a göre ayrı doğrulanır (geçersiz/eksik alanlı
-    # eleman ATLANIR, pozisyon/scale clamp edilir, caption_position/
-    # poll_position ile AYNI desen) ve TÜR FARK ETMEKSİZİN toplam en fazla 3
-    # elemanla sınırlanır (upload_images max_count=4'teki "sessiz kırpma"
-    # emsaliyle aynı). Boş liste DEĞİL None saklanır — "yokluk = render
-    # etme" kontratı.
-    overlay_elements_raw = request.form.get("overlay_elements")
-    overlay_elements = []
-    # @mention sticker'ı ile etiketlenen (kendisi HARİÇ) kullanıcı id'leri —
-    # bildirim story_id oluştuktan SONRA (poll ile AYNI sıra) gönderilir.
-    story_mention_recipient_ids: set = set()
-    if overlay_elements_raw:
-        try:
-            parsed = json.loads(overlay_elements_raw)
-        except (ValueError, TypeError):
-            parsed = []
-        if isinstance(parsed, list):
-            for item in parsed:
-                if not isinstance(item, dict):
-                    continue
-
-                elem_type = item.get("type")
-                if elem_type not in ("image", "mention", "hashtag"):
-                    # type alanı yoksa ama url varsa eski (type'sız) format —
-                    # geriye dönük uyumluluk için image say.
-                    elem_type = "image" if isinstance(item.get("url"), str) else None
-                if elem_type is None:
-                    continue
-
-                position_x = 0.5
-                try:
-                    position_x = float(item.get("position_x", 0.5))
-                    if not (0 <= position_x <= 1):
-                        position_x = 0.5
-                except (TypeError, ValueError):
-                    position_x = 0.5
-
-                position_y = 0.5
-                try:
-                    position_y = float(item.get("position_y", 0.5))
-                    if not (0 <= position_y <= 1):
-                        position_y = 0.5
-                except (TypeError, ValueError):
-                    position_y = 0.5
-
-                scale = 1.0
-                try:
-                    scale = float(item.get("scale", 1.0))
-                    if not (0.3 <= scale <= 3):
-                        scale = 1.0
-                except (TypeError, ValueError):
-                    scale = 1.0
-
-                if elem_type == "image":
-                    url = item.get("url")
-                    if not isinstance(url, str) or not url.strip():
-                        continue
-                    overlay_elements.append({
-                        "type": "image", "url": url.strip(),
-                        "position_x": position_x, "position_y": position_y, "scale": scale,
-                    })
-                elif elem_type == "mention":
-                    uname = item.get("username")
-                    if not isinstance(uname, str) or not uname.strip():
-                        continue
-                    # notify_mentions()'daki AYNI case-insensitive doğrulama —
-                    # var olmayan kullanıcıya işaret eden sticker SESSİZCE
-                    # atlanır (mevcut olmayan bir hesaba "mention" saklanmaz).
-                    try:
-                        prof = sb.table("profiles").select("id, username").ilike(
-                            "username", uname.strip()
-                        ).execute().data
-                    except Exception:
-                        prof = []
-                    if not prof:
-                        continue
-                    real_username = prof[0]["username"]
-                    mentioned_id = prof[0]["id"]
-                    # Görüntülenen kullanıcı adı, linkify_mentions ile AYNI
-                    # şekilde profildeki GERÇEK harflere düzeltilir.
-                    overlay_elements.append({
-                        "type": "mention", "username": real_username,
-                        "position_x": position_x, "position_y": position_y, "scale": scale,
-                    })
-                    if mentioned_id != me:
-                        story_mention_recipient_ids.add(mentioned_id)
-                elif elem_type == "hashtag":
-                    tag = item.get("tag")
-                    if not isinstance(tag, str):
-                        continue
-                    # extract_hashtags() ile AYNI normalizasyon (küçük harf);
-                    # baştaki '#' client'tan gelmiş olabilir, saklanmaz.
-                    tag = tag.strip().lstrip("#").lower()
-                    if not tag:
-                        continue
-                    overlay_elements.append({
-                        "type": "hashtag", "tag": tag,
-                        "position_x": position_x, "position_y": position_y, "scale": scale,
-                    })
-
-                if len(overlay_elements) >= 3:
-                    break
+    # Overlay katmanları (metin/GIF-sticker/mention/hashtag — ÇOKLU) —
+    # paylaşılan parser, app/stories.py::create_story() ile BİREBİR AYNI.
+    overlay_elements, story_mention_recipient_ids = parse_overlay_elements(
+        sb, request.form.get("overlay_elements"), me,
+    )
 
     if not caption and not has_image and not has_video and not has_poll and not overlay_elements:
         return jsonify(error="empty_story"), 400
@@ -281,6 +184,15 @@ def api_create_story():
     visibility = request.form.get("visibility", "public")
     if visibility not in ("public", "followers", "close_friends"):
         visibility = "public"
+
+    # `caption` sütunu türetilir — web create_story()'deki AYNI mantık
+    # (bkz. o dosyadaki yorum): istemci boş gönderip overlay_elements içinde
+    # "text" katman(lar)ı VARSA, metinleri "\n" ile birleştirip caption'a
+    # yazılır. story_archive()/save_highlight() hâlâ düz caption okuyor.
+    if not caption and overlay_elements:
+        text_parts = [el["text"] for el in overlay_elements if el["type"] == "text"]
+        if text_parts:
+            caption = "\n".join(text_parts)
 
     story_data = {
         "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
@@ -310,7 +222,8 @@ def api_create_story():
     if story_id and has_poll:
         try:
             create_poll(sb, poll_options, story_id=story_id,
-                        position_x=poll_position_x, position_y=poll_position_y, scale=poll_scale)
+                        position_x=poll_position_x, position_y=poll_position_y,
+                        scale=poll_scale, rotation=poll_rotation)
         except Exception:
             return jsonify(ok=True, story_id=story_id, poll_error=True)
 
@@ -392,9 +305,12 @@ def api_story_archive():
     me = request.api_user["id"]
     now = datetime.now(timezone.utc).isoformat()
     try:
+        # overlay_elements dahil — aksi halde çoklu metin katmanlı hikayelerin
+        # metni arşivde kaybolur (bkz. app/stories.py::story_archive AYNI ek).
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
-            "background_color, caption_position_x, caption_position_y, caption_style, caption_color"
+            "background_color, caption_position_x, caption_position_y, caption_style, caption_color, "
+            "overlay_elements"
         ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
     except Exception:
         rows = []

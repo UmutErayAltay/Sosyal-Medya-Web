@@ -47,8 +47,11 @@ const MANIFEST = {
   // orada da .content-link bulamayınca sessizce hiçbir şey yapmaz (no-op).
   'post-interactions': ['likes.js', 'polls.js', 'bookmarks.js', 'follow.js', 'postMuteButton.js', 'linkPreview.js'],
 
-  'feed-extra': ['postModal.js', 'stories.js', 'storyHighlights.js', 'infiniteScroll.js'],
-  'profile-extra': ['collections.js', 'profileTabs.js', 'storyHighlights.js', 'storyArchive.js', 'stickers.js'],
+  // storyLayers.js stories.js'TEN ÖNCE — çoklu metin/GIF/mention/hashtag
+  // katman editörü + viewer render'ı, stories.js onu window.StoryLayers
+  // üzerinden çağırıyor (bkz. storyLayers.js dosya başı yorumu).
+  'feed-extra': ['postModal.js', 'storyLayers.js', 'stories.js', 'storyHighlights.js', 'infiniteScroll.js'],
+  'profile-extra': ['collections.js', 'profileTabs.js', 'storyHighlights.js', 'storyLayers.js', 'storyArchive.js', 'stickers.js'],
   'post-detail-extra': ['stickers.js', 'comments.js'],
 
   // messages/_convo_list.html ve messages/_realtime_init.html AYRI partial'lar

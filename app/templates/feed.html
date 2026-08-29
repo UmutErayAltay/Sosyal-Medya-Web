@@ -273,12 +273,22 @@
             <div class="story-form-columns">
                 {# Sol sütun: form kontrolleri #}
                 <div class="story-form-left">
-                    <textarea name="caption" id="story-caption-input" placeholder="Bir şey yaz (opsiyonel)..." rows="2" aria-label="Hikaye altyazısı"></textarea>
+                    {# ÖNEMLİ: `name` özniteliği YOK — metin artık tekil bir
+                       `caption` form alanı DEĞİL, StoryLayers editörünün
+                       "aktif metin katmanı" girişi (bkz. stories.js). Backend
+                       `caption`'ı overlay_elements'teki "text" katmanlarından
+                       türetiyor (app/stories.py::create_story). Kullanıcı
+                       raporu ("storye metin eklediğimizde sadece 1 tane
+                       ekliyor, 2.sine tıklayınca öncekini düzenliyor") burada
+                       çözülüyor: "Yazı" butonu (aşağıdaki attach-row) HER
+                       tıklamada YENİ bir katman başlatır, canvas'taki mevcut
+                       bir yazıya tıklamak SADECE o katmanı bu kutuya yükler. #}
+                    <textarea id="story-caption-input" maxlength="500" placeholder="'Yazı' ile bir metin katmanı ekle..." rows="2" aria-label="Hikaye metin katmanı"></textarea>
+                    <button type="button" class="btn btn-ghost small" id="story-text-style-btn" hidden>{{ icons.icon('edit-2', size=14) }} Yazı stili</button>
 
-                    {# Yazı rengi seçici — altyazı YAZILDIĞINDA görünür (stories.js input
-                       listener'ı kontrol eder, storyTextPreview ile AYNI görünürlük
-                       tetikleyicisi). Native Android ile AYNI 9 renk (platformlar arası
-                       tutarlılık). #}
+                    {# Yazı rengi seçici — aktif metin katmanı VARKEN görünür
+                       (stories.js input listener'ı kontrol eder). Native
+                       Android ile AYNI 9 renk (platformlar arası tutarlılık). #}
                     <div id="story-text-color-palette" class="story-text-color-palette" hidden aria-label="Yazı rengi seç">
                         <button type="button" class="story-text-color-swatch" data-color="#ffffff" title="Beyaz" style="background-color: #ffffff;" aria-label="Yazı rengi: beyaz"></button>
                         <button type="button" class="story-text-color-swatch" data-color="#000000" title="Siyah" style="background-color: #000000;" aria-label="Yazı rengi: siyah"></button>
@@ -355,7 +365,11 @@
                 <div class="story-form-right">
                     <div class="story-media-preview-wrap">
                         <div class="story-media-preview-inner">
-                            <div id="story-text-preview" hidden></div>
+                            {# Metin/GIF/sticker/mention/hashtag katmanları buraya
+                               DİNAMİK olarak eklenir (StoryLayers.createEditor
+                               stage'i) — sabit bir `#story-text-preview` düğümü
+                               ARTIK YOK, çoklu katman tek bir sabit elemana
+                               SIĞMAZ. #}
                             <div id="story-image-preview" class="image-preview-grid" aria-live="polite"></div>
                             <video id="story-video-preview" class="post-video-preview" controls style="display:none"></video>
                             <div id="story-poll-preview-widget" class="story-poll-preview-widget" hidden aria-live="polite"></div>
@@ -364,13 +378,40 @@
                 </div>
             </div>
 
-            {# Gizli input'lar: background_color, visibility ve altyazı konumu
-               (0-1 arası oran — anketin poll_position_x/y'siyle AYNI temsil) #}
+            {# Gizli input'lar — background_color/visibility/caption_position_*
+               eski (tek katmanlı) sözleşmeden kalan geçiş-dönemi alanları,
+               `overlay_elements` (çoklu katman, JSON-encoded — bkz. app/
+               stories.py::parse_overlay_elements) ve `poll_rotation` YENİ. #}
             <input type="hidden" name="background_color" id="story-bg-input" value="">
             <input type="hidden" name="caption_color" id="story-text-color-input" value="">
             <input type="hidden" name="visibility" id="story-visibility-input" value="{{ story_default_visibility }}">
             <input type="hidden" name="caption_position_x" id="story-caption-position-x-input" value="0.5">
             <input type="hidden" name="caption_position_y" id="story-caption-position-y-input" value="0.75">
+            <input type="hidden" name="overlay_elements" id="story-overlay-elements-input" value="">
+            <input type="hidden" name="poll_rotation" id="story-poll-rotation-input" value="0">
+
+            {# GIF/sticker/bahset/etiket paneli — "Yazı"nın AKSİNE arama/liste
+               gerektirdikleri için tek bir dokununca-açılan panelde toplandı
+               (native MediaPickerSheet'in web'deki BASİTLEŞTİRİLMİŞ karşılığı
+               — sekmesiz, GIF ve Sticker AYRI panel). #}
+            <div id="story-gif-panel" class="story-picker-panel" hidden>
+                <input type="text" id="story-gif-search-input" placeholder="GIF ara..." autocomplete="off">
+                <p id="story-gif-loading-msg" class="muted" hidden>Yükleniyor...</p>
+                <div id="story-gif-results" class="story-picker-grid" aria-live="polite"></div>
+            </div>
+            <div id="story-sticker-panel" class="story-picker-panel" hidden>
+                <div id="story-sticker-results" class="story-picker-grid" aria-live="polite"></div>
+            </div>
+            <div id="story-mention-panel" class="story-picker-panel" hidden>
+                <input type="text" id="story-mention-search-input" placeholder="Kullanıcı ara..." autocomplete="off">
+                <div id="story-mention-results" class="story-picker-list" aria-live="polite"></div>
+            </div>
+            <div id="story-hashtag-panel" class="story-picker-panel" hidden>
+                <div class="story-hashtag-input-row">
+                    <input type="text" id="story-hashtag-input" placeholder="örn. tatil" autocomplete="off" maxlength="60">
+                    <button type="button" class="btn btn-ghost small" id="story-hashtag-add-btn">Ekle</button>
+                </div>
+            </div>
 
             {# Butonlar en altta, tam genişlikte #}
             <div class="story-attach-row">
@@ -378,6 +419,11 @@
                 <input type="file" name="image" accept="image/png,image/jpeg,image/gif,image/webp" hidden id="story-image-input">
                 <label class="story-attach-label" for="story-video-input">{{ icons.icon('video', size=14) }} Video</label>
                 <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" hidden id="story-video-input">
+                <button type="button" class="story-attach-label" id="story-add-text-btn">{{ icons.icon('edit-2', size=14) }} Yazı</button>
+                <button type="button" class="story-attach-label" id="story-gif-toggle-btn">{{ icons.icon('film', size=14) }} GIF</button>
+                <button type="button" class="story-attach-label" id="story-sticker-toggle-btn">{{ icons.icon('grid', size=14) }} Sticker</button>
+                <button type="button" class="story-attach-label" id="story-mention-toggle-btn">{{ icons.icon('user', size=14) }} Bahset</button>
+                <button type="button" class="story-attach-label" id="story-hashtag-toggle-btn">{{ icons.icon('tag', size=14) }} Etiket</button>
                 <button type="button" class="story-attach-label" id="story-poll-toggle-btn">{{ icons.icon('bar-chart-2', size=14) }} Anket</button>
                 <button type="button" class="story-attach-label" id="story-bg-toggle-btn">{{ icons.icon('palette', size=14) }} Renk</button>
             </div>

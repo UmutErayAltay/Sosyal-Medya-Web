@@ -17,12 +17,16 @@ bp = Blueprint("polls", __name__)
 
 
 def create_poll(sb, options: list[str], post_id: str = None, story_id: str = None,
-                 position_x: float = 0.5, position_y: float = 0.75, scale: float = 1.0) -> None:
+                 position_x: float = 0.5, position_y: float = 0.75, scale: float = 1.0,
+                 rotation: float = 0.0) -> None:
     """Yeni bir anket oluşturur — post veya hikaye için.
 
     İkisinden TAM OLARAK BİRİ verilmeli. Seçenekler listesi 2+ eleman içermeli.
     position_x/y: 0-1 arasında, canvas'a göre oran (hikaye anketi için).
     scale: 0.3-3 arasında boyut çarpanı; varsayılan 1.0.
+    rotation: derece, hikaye metin/overlay katmanlarıyla AYNI iki-parmak
+    döndürme jesti (bkz. app/stories.py::parse_overlay_elements); post
+    anketlerinde her zaman varsayılan 0 kalır (sql/migration_story_overlay_rotation.sql).
     """
     if not options or len(options) < 2:
         return
@@ -34,13 +38,24 @@ def create_poll(sb, options: list[str], post_id: str = None, story_id: str = Non
             "position_x": position_x,
             "position_y": position_y,
             "scale": scale,
+            "rotation": rotation,
         }
         if post_id:
             poll_data["post_id"] = post_id
         if story_id:
             poll_data["story_id"] = story_id
 
-        poll = sb.table("polls").insert(poll_data).execute()
+        try:
+            poll = sb.table("polls").insert(poll_data).execute()
+        except Exception:
+            # sql/migration_story_overlay_rotation.sql henüz uygulanmamışsa
+            # `rotation` kolonu yoktur — TÜM anket oluşturmayı (post VEYA
+            # hikaye) sessizce kırmak yerine (dıştaki except zaten yutuyor,
+            # kullanıcı "anket eklenemedi" görürdü) migration öncesi
+            # kolonlarla tekrar dene. story_data'daki AYNI "eski kolonlarla
+            # fallback" deseni (bkz. app/stories.py::create_story).
+            poll_data.pop("rotation", None)
+            poll = sb.table("polls").insert(poll_data).execute()
         poll_id = poll.data[0]["id"]
         sb.table("poll_options").insert([
             {"poll_id": poll_id, "option_text": opt, "position": i}

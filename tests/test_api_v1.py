@@ -4464,16 +4464,18 @@ class TestApiV1StoryOverlayElements:
 
         self._cleanup(app, user["id"], story_id)
 
-    def test_create_story_overlay_elements_capped_at_three(self, app, client, test_user_factory):
-        """4. ve sonrası eleman sessizce kırpılır — upload_images max_count
-        emsaliyle AYNI 'sessiz sınırlama' deseni, istek ERROR ETMEZ."""
+    def test_create_story_overlay_elements_capped_at_ten(self, app, client, test_user_factory):
+        """11. ve sonrası eleman sessizce kırpılır — çoklu metin katmanı
+        özelliğiyle limit 3'ten 10'a çıkarıldı (bkz. app/stories.py
+        MAX_OVERLAY_ELEMENTS), upload_images max_count emsaliyle AYNI 'sessiz
+        sınırlama' deseni, istek ERROR ETMEZ."""
         user = test_user_factory(email="apiv1_story_overlay_cap@example.com", password="TestPass123!")
         token = _api_token_for(app, user["id"])
         headers = {"Authorization": f"Bearer {token}"}
 
         elements = [
             {"url": f"https://media.klipy.co/sticker/cap{i}.gif", "position_x": 0.5, "position_y": 0.5, "scale": 1.0}
-            for i in range(5)
+            for i in range(12)
         ]
         resp = client.post(
             "/api/v1/stories",
@@ -4486,11 +4488,9 @@ class TestApiV1StoryOverlayElements:
         fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
         story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
         stored = story["overlay_elements"]
-        assert len(stored) == 3
+        assert len(stored) == 10
         assert [e["url"] for e in stored] == [
-            "https://media.klipy.co/sticker/cap0.gif",
-            "https://media.klipy.co/sticker/cap1.gif",
-            "https://media.klipy.co/sticker/cap2.gif",
+            f"https://media.klipy.co/sticker/cap{i}.gif" for i in range(10)
         ]
 
         self._cleanup(app, user["id"], story_id)
@@ -4569,6 +4569,195 @@ class TestApiV1StoryOverlayElements:
         assert stored[0]["position_x"] == pytest.approx(0.5)
         assert stored[0]["position_y"] == pytest.approx(0.5)
         assert stored[0]["scale"] == pytest.approx(1.0)
+
+        self._cleanup(app, user["id"], story_id)
+
+    def test_create_story_overlay_rotation_round_trips(self, app, client, test_user_factory):
+        """rotation — position_x/y/scale ile AYNI fail-open desen, ama
+        reddetmek yerine %360 ile normalize edilir."""
+        user = test_user_factory(email="apiv1_story_overlay_rotation@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [
+            {"url": "https://media.klipy.co/sticker/r1.gif", "rotation": 45.0},
+            {"url": "https://media.klipy.co/sticker/r2.gif"},  # rotation yok -> 0.0
+            {"url": "https://media.klipy.co/sticker/r3.gif", "rotation": 400.0},  # %360 -> 40.0
+            {"url": "https://media.klipy.co/sticker/r4.gif", "rotation": "abc"},  # parse edilemez -> 0.0
+        ]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        stored = story["overlay_elements"]
+        assert [e["rotation"] for e in stored] == pytest.approx([45.0, 0.0, 40.0, 0.0])
+
+        self._cleanup(app, user["id"], story_id)
+
+
+class TestApiV1StoryTextOverlayElements:
+    """POST /api/v1/stories — overlay_elements'te YENİ `type:"text"` katmanı
+    (çoklu bağımsız metin kutusu özelliği — eskiden tekil `caption` alanına
+    sıkışmıştı, bkz. app/stories.py::parse_overlay_elements docstring'i).
+    Aynı `_cleanup` yardımcısı TestApiV1StoryOverlayElements ile paylaşılır."""
+
+    @staticmethod
+    def _cleanup(app, user_id, story_id=None):
+        with app.app_context():
+            sb = get_sb()
+            if story_id:
+                sb.table("stories").delete().eq("id", story_id).execute()
+            sb.table("api_tokens").delete().eq("user_id", user_id).execute()
+
+    def test_text_element_round_trips_with_all_fields(self, app, client, test_user_factory):
+        user = test_user_factory(email="apiv1_story_text_ok@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [{
+            "type": "text", "text": "merhaba dünya", "style": "pill_dark", "color": "#ff6fa5",
+            "position_x": 0.2, "position_y": 0.3, "scale": 1.4, "rotation": 15.0,
+        }]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        stored = story["overlay_elements"]
+        assert len(stored) == 1
+        el = stored[0]
+        assert el["type"] == "text"
+        assert el["text"] == "merhaba dünya"
+        assert el["style"] == "pill_dark"
+        assert el["color"] == "#ff6fa5"
+        assert el["position_x"] == pytest.approx(0.2)
+        assert el["position_y"] == pytest.approx(0.3)
+        assert el["scale"] == pytest.approx(1.4)
+        assert el["rotation"] == pytest.approx(15.0)
+
+        self._cleanup(app, user["id"], story_id)
+
+    def test_empty_or_whitespace_text_is_dropped(self, app, client, test_user_factory):
+        user = test_user_factory(email="apiv1_story_text_empty@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [
+            {"type": "text", "text": "   "},
+            {"type": "text", "text": "gerçek metin"},
+        ]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        stored = story["overlay_elements"]
+        assert len(stored) == 1
+        assert stored[0]["text"] == "gerçek metin"
+
+        self._cleanup(app, user["id"], story_id)
+
+    def test_invalid_style_and_color_fall_back_to_none_but_element_kept(self, app, client, test_user_factory):
+        user = test_user_factory(email="apiv1_story_text_invalid_style@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [{"type": "text", "text": "stil testi", "style": "pill_neon", "color": "red"}]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        stored = story["overlay_elements"]
+        assert len(stored) == 1
+        assert stored[0]["style"] is None
+        assert stored[0]["color"] is None
+
+        self._cleanup(app, user["id"], story_id)
+
+    def test_text_only_story_does_not_400_empty_story(self, app, client, test_user_factory):
+        """Görsel/video/anket/caption YOKKEN sadece bir text overlay elemanı
+        hikayeyi 'boş' saymamalı (bkz. api_create_story empty_story kontrolü,
+        overlay_elements'i zaten sayıyordu — text tipi de aynı sayıma dahil)."""
+        user = test_user_factory(email="apiv1_story_text_only@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [{"type": "text", "text": "sadece metin"}]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+        self._cleanup(app, user["id"], story_id)
+
+    def test_caption_is_derived_from_text_layers_when_omitted(self, app, client, test_user_factory):
+        """`caption` bo\u015f g\u00f6nderilip overlay_elements'te text katman(lar)\u0131
+        VARSA, backend caption'\u0131 o katmanlar\u0131n metninden t\u00fcretir (\"\\n\" ile
+        birle\u015ftirerek) \u2014 story_archive()/save_highlight() h\u00e2l\u00e2 d\u00fcz caption
+        okuyor, bu onlar\u0131 KORUYAN assert."""
+        user = test_user_factory(email="apiv1_story_text_derived_caption@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [
+            {"type": "text", "text": "ilk sat\u0131r"},
+            {"type": "text", "text": "ikinci sat\u0131r"},
+        ]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        assert story["caption"] == "ilk satır\nikinci satır"
+
+        self._cleanup(app, user["id"], story_id)
+
+    def test_explicit_caption_wins_over_derived(self, app, client, test_user_factory):
+        user = test_user_factory(email="apiv1_story_text_explicit_caption@example.com", password="TestPass123!")
+        token = _api_token_for(app, user["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [{"type": "text", "text": "overlay metni"}]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"caption": "elle yazılan caption", "overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{user['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        assert story["caption"] == "elle yazılan caption"
 
         self._cleanup(app, user["id"], story_id)
 
@@ -4788,6 +4977,45 @@ class TestApiV1StoryMentionHashtagStickers:
             ).eq("type", "story_mention").execute().data
             assert notif, "story_mention bildirimi oluşmadı"
             assert notif[0]["actor_id"] == author["id"]
+
+        self._cleanup(app, author["id"], story_id, mentioned["id"])
+
+    def test_mixed_text_and_mention_elements_round_trip_and_notify(self, app, client, test_user_factory):
+        """Çoklu metin katmanı ile mention aynı hikayede karışık gönderilince
+        ikisi de sırayı bozmadan hayatta kalmalı VE bildirim yine gitmeli —
+        mention dalının `continue`'ları text elemanlarını ETKİLEMEMELİ."""
+        author = test_user_factory(email="apiv1_story_mixed_text_mention_author@example.com", password="TestPass123!")
+        mentioned = test_user_factory(email="apiv1_story_mixed_text_mention_target@example.com", password="TestPass123!")
+        author_token = _api_token_for(app, author["id"])
+        headers = {"Authorization": f"Bearer {author_token}"}
+
+        elements = [
+            {"type": "text", "text": "birinci metin"},
+            {"type": "mention", "username": mentioned["username"]},
+            {"type": "text", "text": "ikinci metin"},
+        ]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{author['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        stored = story["overlay_elements"]
+        assert [e["type"] for e in stored] == ["text", "mention", "text"]
+        assert stored[0]["text"] == "birinci metin"
+        assert stored[2]["text"] == "ikinci metin"
+        assert stored[1]["username"] == mentioned["username"]
+
+        with app.app_context():
+            sb = get_sb()
+            notif = sb.table("notifications").select("id").eq(
+                "recipient_id", mentioned["id"]
+            ).eq("type", "story_mention").execute().data
+            assert notif, "karışık payload'da story_mention bildirimi oluşmadı"
 
         self._cleanup(app, author["id"], story_id, mentioned["id"])
 

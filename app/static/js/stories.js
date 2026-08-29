@@ -34,15 +34,67 @@
     var storyBgInput = document.getElementById('story-bg-input');
     var storyTextColorPalette = document.getElementById('story-text-color-palette');
     var storyTextColorInput = document.getElementById('story-text-color-input');
-    var storyTextPreview = document.getElementById('story-text-preview');
+    var storyTextStyleBtn = document.getElementById('story-text-style-btn');
     var storyMediaPreviewInner = document.querySelector('.story-media-preview-inner');
     var storyVisibilityInput = document.getElementById('story-visibility-input');
     var storyVisibilityWrap = document.querySelector('.story-visibility-wrap');
     var storyVisibilityBtn = document.getElementById('story-visibility-btn');
     var storyVisibilityMenu = document.getElementById('story-visibility-menu');
     var storyVisibilityBtnContent = document.getElementById('story-visibility-btn-content');
-    var storyCaptionPosXInput = document.getElementById('story-caption-position-x-input');
-    var storyCaptionPosYInput = document.getElementById('story-caption-position-y-input');
+    var storyOverlayElementsInput = document.getElementById('story-overlay-elements-input');
+    var storyCaptionInput = document.getElementById('story-caption-input');
+
+    // ------------------------------------------------------------------
+    // Çoklu katman editörü (storyLayers.js) — metin/GIF-sticker/mention/
+    // hashtag. Kullanıcı raporu ("storye metin eklediğimizde sadece 1 tane
+    // ekliyor, 2.sine tıklayınca öncekini düzenliyor"): "Yazı" butonu HER
+    // tıklamada YENİ katman ekler (activeTextLayerId = null -> sonraki
+    // tuş vuruşu yeni katman yaratır), canvas'taki mevcut bir yazıya
+    // dokunmak (onLayerTap) SADECE o katmanı `#story-caption-input`'a
+    // yükleyip düzenler.
+    // ------------------------------------------------------------------
+    var storyMediaPreviewWrapEl = document.querySelector('.story-media-preview-wrap');
+    var storyEditor = (storyMediaPreviewInner && storyMediaPreviewWrapEl)
+        ? window.StoryLayers.createEditor({
+            stage: storyMediaPreviewInner,
+            container: storyMediaPreviewWrapEl,
+            maxLayers: 10,
+            onChange: function (serialized) {
+                if (storyOverlayElementsInput) {
+                    storyOverlayElementsInput.value = serialized.length ? JSON.stringify(serialized) : '';
+                }
+            },
+            onLayerTap: function (layer) {
+                if (layer.type !== 'text') return;
+                activeTextLayerId = layer.id;
+                currentTextStyle = layer.style || null;
+                currentTextColor = layer.color || null;
+                if (storyCaptionInput) {
+                    storyCaptionInput.value = layer.text || '';
+                    storyCaptionInput.focus();
+                }
+                updateTextControlsVisibility();
+            },
+        })
+        : null;
+
+    // "Aktif metin katmanı" — null: bir sonraki tuş vuruşu YENİ bir katman
+    // yaratır. Var olan bir id: `#story-caption-input`'taki değişiklikler O
+    // katmanı günceller (canvas'taki mevcut yazıya dokununca set edilir).
+    var activeTextLayerId = null;
+    var currentTextStyle = null;
+    var currentTextColor = null;
+
+    function updateTextControlsVisibility() {
+        var hasActiveText = !!(storyCaptionInput && storyCaptionInput.value.trim());
+        if (storyTextColorPalette) storyTextColorPalette.hidden = !hasActiveText;
+        if (storyTextStyleBtn) storyTextStyleBtn.hidden = !hasActiveText;
+        if (storyTextColorPalette) {
+            storyTextColorPalette.querySelectorAll('.story-text-color-swatch').forEach(function (sw) {
+                sw.classList.toggle('selected', sw.dataset.color === currentTextColor);
+            });
+        }
+    }
 
     function openStoryModal() {
         if (!storyModal) return;
@@ -64,14 +116,23 @@
         // Renk seçicisini gizle ve reset et
         if (storyBgPalette) storyBgPalette.hidden = true;
         if (storyBgInput) storyBgInput.value = '';
-        if (storyTextPreview) {
-            storyTextPreview.hidden = true;
-            storyTextPreview.removeAttribute('style');
-            delete storyTextPreview.dataset.positionX;
-            delete storyTextPreview.dataset.positionY;
-        }
-        if (storyCaptionPosXInput) storyCaptionPosXInput.value = '0.5';
-        if (storyCaptionPosYInput) storyCaptionPosYInput.value = '0.75';
+        // Çoklu katman editörünü tamamen temizle (metin/GIF/mention/hashtag) —
+        // form.reset() DOM'da elle eklenmiş .story-layer düğümlerine dokunmaz,
+        // storyEditor.reset() bunları siler.
+        if (storyEditor) storyEditor.reset();
+        activeTextLayerId = null;
+        currentTextStyle = null;
+        currentTextColor = null;
+        if (storyOverlayElementsInput) storyOverlayElementsInput.value = '';
+        if (storyTextColorPalette) storyTextColorPalette.hidden = true;
+        if (storyTextStyleBtn) storyTextStyleBtn.hidden = true;
+        resetPollState();
+        closeAllStoryPickerPanels();
+        if (storyGifSearchInput) storyGifSearchInput.value = '';
+        if (storyGifResults) storyGifResults.innerHTML = '';
+        if (storyMentionSearchInput) storyMentionSearchInput.value = '';
+        if (storyMentionResults) storyMentionResults.innerHTML = '';
+        if (storyHashtagInput) storyHashtagInput.value = '';
         if (storyMediaPreviewInner) storyMediaPreviewInner.style.backgroundColor = '';
         // Swatch'ları deselect et
         if (storyBgPalette) {
@@ -79,8 +140,7 @@
                 sw.classList.remove('selected');
             });
         }
-        // Yazı rengi seçicisini de gizle ve reset et — storyBgPalette ile AYNI mantık
-        if (storyTextColorPalette) storyTextColorPalette.hidden = true;
+        // Yazı rengi seçicisini reset et — storyBgPalette ile AYNI mantık
         if (storyTextColorInput) storyTextColorInput.value = '';
         if (storyTextColorPalette) {
             storyTextColorPalette.querySelectorAll('.story-text-color-swatch').forEach(function (sw) {
@@ -145,70 +205,117 @@
         if (e.key === 'Escape' && storyModal && !storyModal.hidden) closeStoryModal();
     });
 
-    // Hikaye altyazısı: içeriğe göre otomatik büyür/küçülür — comments.js/chat.js
-    // ile AYNI desen (manuel resize tutamacı yerine, kullanıcı isteği).
+    // Hikaye metin katmanı girişi: içeriğe göre otomatik büyür/küçülür —
+    // comments.js/chat.js ile AYNI desen (manuel resize tutamacı yerine).
+    //
+    // Kullanıcı raporu ("storye metin eklediğimizde sadece 1 tane ekliyor,
+    // 2.sine tıklayınca öncekini düzenliyor"): `activeTextLayerId` null iken
+    // İLK tuş vuruşu YENİ bir katman yaratır (canvas'ta "Yazı" butonu veya
+    // bu textarea'nın kendisi bunu tetikler); id doluysa (canvas'taki mevcut
+    // bir yazıya dokunulmuşsa, bkz. onLayerTap) SADECE o katman güncellenir.
+    // Metin boşaltılırsa katman SİLİNİR (native'deki AYNI davranış).
     document.addEventListener('input', function (e) {
-        if (e.target.id !== 'story-caption-input') return;
+        if (e.target.id !== 'story-caption-input' || !storyEditor) return;
         e.target.style.height = 'auto';
         e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
 
-        // Altyazı sürükleme widget'ı: medya olsun olmasın FARK ETMEKSİZİN
-        // yazı VARSA görünür + sürüklenebilir (önceden SADECE medyasız
-        // salt-metin modunda çalışıyordu — kullanıcı isteği: "görsel
-        // ekleyince de yazdığımız yazı hikayenin üstünde gözüksün").
-        if (storyTextPreview) {
-            var hasText = !!e.target.value.trim();
-            var wasHidden = storyTextPreview.hidden;
-            storyTextPreview.textContent = e.target.value;
-            storyTextPreview.hidden = !hasText;
-            // Boştan yazıya geçişte konumu varsayılana sıfırla — anket
-            // widget'ının her toggle-open'da initStoryPollWidget() çağırdığı
-            // AYNI mantık.
-            if (hasText && wasHidden) initStoryCaptionWidget();
+        var value = e.target.value;
+        if (activeTextLayerId === null) {
+            if (value.trim()) {
+                var newLayer = storyEditor.addLayer('text', { text: value, style: currentTextStyle, color: currentTextColor });
+                if (newLayer) activeTextLayerId = newLayer.id;
+            }
+        } else if (!value.trim()) {
+            storyEditor.removeLayer(activeTextLayerId);
+            activeTextLayerId = null;
+        } else {
+            storyEditor.updateTextLayer(activeTextLayerId, { text: value });
         }
 
-        // Yazı rengi seçicisi: caption VARSA görünür (kullanıcı isteği: "yazıyı
-        // yazarken alt kısımda 9 farklı renk çıkabilir") — storyTextPreview'ın
-        // görünürlük tetikleyicisiyle AYNI.
-        if (storyTextColorPalette) {
-            storyTextColorPalette.hidden = !e.target.value.trim();
-        }
+        updateTextControlsVisibility();
     });
 
-    // Anket oluşturma modalında widget'ı sürüklenebilir ve boyutlandırılabilir yap
+    // "Yazı" butonu — HER tıklama YENİ bir katman başlatır: aktif düzenlemeyi
+    // bırakır (varsa boşsa siler) ve textarea'yı boşaltıp odaklar, bir
+    // sonraki tuş vuruşu (yukarıdaki input handler) taze bir katman yaratır.
+    var storyAddTextBtn = document.getElementById('story-add-text-btn');
+    if (storyAddTextBtn) {
+        storyAddTextBtn.addEventListener('click', function () {
+            if (!storyEditor) return;
+            if (activeTextLayerId !== null) {
+                var current = storyEditor.findLayer(activeTextLayerId);
+                if (current && !current.text.trim()) storyEditor.removeLayer(activeTextLayerId);
+            }
+            activeTextLayerId = null;
+            currentTextStyle = null;
+            currentTextColor = null;
+            if (storyCaptionInput) {
+                storyCaptionInput.value = '';
+                storyCaptionInput.style.height = 'auto';
+                storyCaptionInput.focus();
+            }
+            updateTextControlsVisibility();
+        });
+    }
+
+    // Yazı stili döngüsü — null (klasik) -> pill_light -> pill_dark -> null,
+    // SADECE aktif katman için (native onTextStyleCycle ile AYNI mantık).
+    if (storyTextStyleBtn) {
+        storyTextStyleBtn.addEventListener('click', function () {
+            if (activeTextLayerId === null) return;
+            currentTextStyle = currentTextStyle === null ? 'pill_light'
+                : currentTextStyle === 'pill_light' ? 'pill_dark' : null;
+            storyEditor.updateTextLayer(activeTextLayerId, { style: currentTextStyle });
+        });
+    }
+
+    // Anket oluşturma modalında widget'ı sürüklenebilir + pinch ile
+    // ölçeklenebilir + iki-parmakla döndürülebilir yap — storyLayers.js'in
+    // paylaşılan `bindDraggable()`'ı (eskiden BURADA storyPollDragState/
+    // storyCaptionDragState adında İKİ AYRI ama BİREBİR AYNI global-document
+    // sürükleme bloğu vardı, bkz. dosya başı yorumu).
     var storyPollPreviewWidget = document.getElementById('story-poll-preview-widget');
-    var storyMediaPreviewWrap = storyPollPreviewWidget ? storyPollPreviewWidget.closest('.story-media-preview-wrap') : null;
     var storyPollScaleSlider = document.getElementById('story-poll-scale-slider');
     var storyPollScaleDisplay = document.getElementById('story-poll-scale-display');
     var storyPollScaleControl = document.getElementById('story-poll-scale-control');
-    var storyPollDragState = { dragging: false, startX: 0, startY: 0, startPosX: 0.5, startPosY: 0.5 };
+    var pollState = { position_x: 0.5, position_y: 0.5, scale: 1, rotation: 0 };
 
-    function initStoryPollWidget() {
-        if (!storyPollPreviewWidget) return;
-        // Widget başlangıç: konteyner center'ında
-        storyPollPreviewWidget.style.left = '50%';
-        storyPollPreviewWidget.style.top = '50%';
-        storyPollPreviewWidget.style.transform = 'translate(-50%, -50%) scale(1)';
-        storyPollPreviewWidget.dataset.positionX = '0.5';
-        storyPollPreviewWidget.dataset.positionY = '0.5';
-        storyPollPreviewWidget.dataset.scale = '1';
-        if (storyPollScaleSlider) storyPollScaleSlider.value = '1';
-        if (storyPollScaleDisplay) storyPollScaleDisplay.textContent = '100%';
+    function syncPollHiddenInputs() {
+        var posXInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_position_x"]') : null;
+        var posYInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_position_y"]') : null;
+        var scaleInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_scale"]') : null;
+        var rotationInput = document.getElementById('story-poll-rotation-input');
+        if (posXInput) posXInput.value = pollState.position_x.toFixed(2);
+        if (posYInput) posYInput.value = pollState.position_y.toFixed(2);
+        if (scaleInput) scaleInput.value = pollState.scale.toFixed(2);
+        if (rotationInput) rotationInput.value = pollState.rotation.toFixed(1);
+        if (storyPollScaleSlider) storyPollScaleSlider.value = pollState.scale;
+        if (storyPollScaleDisplay) storyPollScaleDisplay.textContent = Math.round(pollState.scale * 100) + '%';
     }
 
-    // Anket boyutu slider'ı
+    function resetPollState() {
+        pollState.position_x = 0.5;
+        pollState.position_y = 0.5;
+        pollState.scale = 1;
+        pollState.rotation = 0;
+        if (storyPollPreviewWidget) window.StoryLayers.applyTransform(storyPollPreviewWidget, pollState);
+        syncPollHiddenInputs();
+    }
+
+    if (storyPollPreviewWidget && storyMediaPreviewWrapEl) {
+        window.StoryLayers.bindDraggable(storyPollPreviewWidget, pollState, {
+            container: storyMediaPreviewWrapEl,
+            onChange: syncPollHiddenInputs,
+        });
+    }
+
+    // Anket boyutu slider'ı — masaüstünde pinch yapılamadığı için manuel
+    // fallback (native/web ortak "wheel/slider" deseni).
     if (storyPollScaleSlider) {
         storyPollScaleSlider.addEventListener('input', function (e) {
-            var scale = parseFloat(e.target.value);
-            if (storyPollPreviewWidget) {
-                storyPollPreviewWidget.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
-                storyPollPreviewWidget.dataset.scale = scale.toFixed(2);
-                var pollScaleInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_scale"]') : null;
-                if (pollScaleInput) pollScaleInput.value = scale.toFixed(2);
-            }
-            if (storyPollScaleDisplay) {
-                storyPollScaleDisplay.textContent = Math.round(scale * 100) + '%';
-            }
+            pollState.scale = window.StoryLayers.clampScale(parseFloat(e.target.value));
+            if (storyPollPreviewWidget) window.StoryLayers.applyTransform(storyPollPreviewWidget, pollState);
+            syncPollHiddenInputs();
         });
     }
 
@@ -233,108 +340,6 @@
         storyPollPreviewWidget.innerHTML = html;
     }
 
-    // Poll widget sürükleme: Pointer Events (mouse + touch). Konum HER ZAMAN
-    // yüzde bazlı left/top + translate(-50%,-50%) scale(s) olarak tutulur —
-    // gerçek görüntüleyicinin (renderStoryPoll) kullandığı AYNI temsil.
-    // Önceki sürümde sürükleme sırasında `transform: none` yazılıyordu, bu da
-    // scale() kısmını TAMAMEN siliyordu — "anketi küçültüp sürükleyince geri
-    // büyüyor" bug'ının kök nedeni buydu (scale sürükleme bitince asla geri
-    // uygulanmıyordu). Artık scale hiç dokunulmadan korunuyor.
-    if (storyPollPreviewWidget) {
-        storyPollPreviewWidget.addEventListener('pointerdown', function (e) {
-            if (!storyMediaPreviewWrap) return;
-            e.preventDefault();
-            storyPollDragState.dragging = true;
-            storyPollDragState.startX = e.clientX;
-            storyPollDragState.startY = e.clientY;
-            storyPollDragState.startPosX = parseFloat(storyPollPreviewWidget.dataset.positionX || '0.5');
-            storyPollDragState.startPosY = parseFloat(storyPollPreviewWidget.dataset.positionY || '0.5');
-        });
-    }
-
-    document.addEventListener('pointermove', function (e) {
-        if (!storyPollDragState.dragging || !storyMediaPreviewWrap || !storyPollPreviewWidget) return;
-        var containerRect = storyMediaPreviewWrap.getBoundingClientRect();
-        var deltaXPct = (e.clientX - storyPollDragState.startX) / containerRect.width;
-        var deltaYPct = (e.clientY - storyPollDragState.startY) / containerRect.height;
-        var posX = Math.max(0, Math.min(1, storyPollDragState.startPosX + deltaXPct));
-        var posY = Math.max(0, Math.min(1, storyPollDragState.startPosY + deltaYPct));
-
-        var scale = parseFloat(storyPollPreviewWidget.dataset.scale || '1');
-        storyPollPreviewWidget.style.left = (posX * 100) + '%';
-        storyPollPreviewWidget.style.top = (posY * 100) + '%';
-        storyPollPreviewWidget.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
-        storyPollPreviewWidget.dataset.positionX = posX.toFixed(2);
-        storyPollPreviewWidget.dataset.positionY = posY.toFixed(2);
-    });
-
-    document.addEventListener('pointerup', function (e) {
-        if (!storyPollDragState.dragging) return;
-        storyPollDragState.dragging = false;
-
-        // Konum zaten pointermove'da % + dataset'e yazıldı — gizli input'lara aktar
-        var posX = storyPollPreviewWidget.dataset.positionX || '0.50';
-        var posY = storyPollPreviewWidget.dataset.positionY || '0.50';
-        var pollPosXInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_position_x"]') : null;
-        var pollPosYInput = storyPollContainer ? storyPollContainer.querySelector('input[name="poll_position_y"]') : null;
-        if (pollPosXInput) pollPosXInput.value = posX;
-        if (pollPosYInput) pollPosYInput.value = posY;
-    });
-
-    // Altyazı widget'ı sürükleme — anket widget'ıyla (storyPollDragState,
-    // yukarıdaki üç pointer handler) BİREBİR AYNI desen, scale YOK (sadece
-    // konum — kullanıcı isteği: "text olarak yazımız sağda ön izlemede
-    // gözüküyor onu da anket gibi yerini seçebilelim").
-    var storyCaptionDragState = { dragging: false, startX: 0, startY: 0, startPosX: 0.5, startPosY: 0.75 };
-
-    function initStoryCaptionWidget() {
-        if (!storyTextPreview) return;
-        // Widget başlangıç: konteynerin alt-orta bölgesinde (gizli input'ların
-        // varsayılan 0.5/0.75 değeriyle AYNI)
-        storyTextPreview.style.left = '50%';
-        storyTextPreview.style.top = '75%';
-        storyTextPreview.style.transform = 'translate(-50%, -50%)';
-        storyTextPreview.dataset.positionX = '0.5';
-        storyTextPreview.dataset.positionY = '0.75';
-    }
-
-    if (storyTextPreview) {
-        storyTextPreview.addEventListener('pointerdown', function (e) {
-            if (!storyMediaPreviewWrap) return;
-            e.preventDefault();
-            storyCaptionDragState.dragging = true;
-            storyCaptionDragState.startX = e.clientX;
-            storyCaptionDragState.startY = e.clientY;
-            storyCaptionDragState.startPosX = parseFloat(storyTextPreview.dataset.positionX || '0.5');
-            storyCaptionDragState.startPosY = parseFloat(storyTextPreview.dataset.positionY || '0.75');
-        });
-    }
-
-    document.addEventListener('pointermove', function (e) {
-        if (!storyCaptionDragState.dragging || !storyMediaPreviewWrap || !storyTextPreview) return;
-        var containerRect = storyMediaPreviewWrap.getBoundingClientRect();
-        var deltaXPct = (e.clientX - storyCaptionDragState.startX) / containerRect.width;
-        var deltaYPct = (e.clientY - storyCaptionDragState.startY) / containerRect.height;
-        var posX = Math.max(0, Math.min(1, storyCaptionDragState.startPosX + deltaXPct));
-        var posY = Math.max(0, Math.min(1, storyCaptionDragState.startPosY + deltaYPct));
-
-        storyTextPreview.style.left = (posX * 100) + '%';
-        storyTextPreview.style.top = (posY * 100) + '%';
-        storyTextPreview.style.transform = 'translate(-50%, -50%)';
-        storyTextPreview.dataset.positionX = posX.toFixed(2);
-        storyTextPreview.dataset.positionY = posY.toFixed(2);
-    });
-
-    document.addEventListener('pointerup', function (e) {
-        if (!storyCaptionDragState.dragging) return;
-        storyCaptionDragState.dragging = false;
-
-        var posX = storyTextPreview.dataset.positionX || '0.50';
-        var posY = storyTextPreview.dataset.positionY || '0.75';
-        if (storyCaptionPosXInput) storyCaptionPosXInput.value = posX;
-        if (storyCaptionPosYInput) storyCaptionPosYInput.value = posY;
-    });
-
     // Hikaye formu: anket toggle ve seçenek ekleme
     if (storyPollToggleBtn) {
         storyPollToggleBtn.addEventListener('click', function (e) {
@@ -350,7 +355,7 @@
                     // hatasına yol açıyordu. Poll widget'ı göster + init et
                     if (storyPollPreviewWidget) {
                         storyPollPreviewWidget.hidden = false;
-                        initStoryPollWidget();
+                        resetPollState();
                         updateStoryPollPreview(['Seçenek 1', 'Seçenek 2']);
                     }
                     if (storyPollScaleControl) storyPollScaleControl.hidden = false;
@@ -395,9 +400,6 @@
         if (storyBgInput) storyBgInput.value = color;
 
         // Medya preview'ı güncelle: rengi uygula, medya varsa yok say.
-        // NOT: storyTextPreview'ın (altyazı widget'ı) görünürlüğü artık
-        // BURADAN değil, sadece caption input listener'ından yönetiliyor
-        // (medya var/yok fark etmeksizin caption VARSA widget görünür).
         if (storyMediaPreviewInner) {
             var hasMedia = storyImagePreview && storyImagePreview.innerHTML.trim() !== '' ||
                           storyVideoPreview && storyVideoPreview.style.display !== 'none';
@@ -410,28 +412,21 @@
         }
     });
 
-    // Yazı rengi swatch'ları — document delegation ile (storyBgPalette
-    // handler'ıyla BİREBİR AYNI desen, storyTextColorPalette'in içinde)
+    // Yazı rengi swatch'ları — aynı renge tekrar dokununca (toggle) null'a
+    // (varsayılan beyaz) döner, SADECE aktif katman için (native
+    // onTextColorChange ile AYNI mantık).
     document.addEventListener('click', function (e) {
         var swatch = e.target.closest('.story-text-color-swatch');
         if (!swatch || !storyTextColorPalette || storyTextColorPalette.hidden) return;
         e.preventDefault();
+        if (activeTextLayerId === null || !storyEditor) return;
 
         var color = swatch.dataset.color;
         if (!color) return;
-
-        // Tüm swatch'ları deselect et
-        storyTextColorPalette.querySelectorAll('.story-text-color-swatch').forEach(function (sw) {
-            sw.classList.remove('selected');
-        });
-        // Bu swatch'ı seçili yap
-        swatch.classList.add('selected');
-
-        // Gizli input'a rengi yaz
-        if (storyTextColorInput) storyTextColorInput.value = color;
-
-        // Canlı önizleme: altyazı widget'ının yazı rengini anında güncelle
-        if (storyTextPreview) storyTextPreview.style.color = color;
+        currentTextColor = (currentTextColor === color) ? null : color;
+        storyEditor.updateTextLayer(activeTextLayerId, { color: currentTextColor });
+        if (storyTextColorInput) storyTextColorInput.value = currentTextColor || '';
+        updateTextControlsVisibility();
     });
 
 
@@ -478,6 +473,172 @@
                 var inputs = storyPollContainer.querySelectorAll('input[type="text"]');
                 inputs.forEach(function (inp) { inp.value = ''; });
             }
+        });
+    }
+
+    // ============================================================
+    // --- GIF / Sticker / Bahset / Etiket panelleri ---
+    // Native MediaPickerSheet'in web'deki basitleştirilmiş karşılığı —
+    // sekmesiz, her biri kendi toggle butonunun altında açılan panel
+    // (.story-bg-palette/.story-text-color-palette ile AYNI "toggle
+    // butonu -> sessizce açılan panel" deseni). Seçim doğrudan
+    // storyEditor.addLayer() çağırır.
+    // ============================================================
+    var storyGifToggleBtn = document.getElementById('story-gif-toggle-btn');
+    var storyGifPanel = document.getElementById('story-gif-panel');
+    var storyGifSearchInput = document.getElementById('story-gif-search-input');
+    var storyGifResults = document.getElementById('story-gif-results');
+    var storyGifLoadingMsg = document.getElementById('story-gif-loading-msg');
+    var storyStickerToggleBtn = document.getElementById('story-sticker-toggle-btn');
+    var storyStickerPanel = document.getElementById('story-sticker-panel');
+    var storyStickerResults = document.getElementById('story-sticker-results');
+    var storyMentionToggleBtn = document.getElementById('story-mention-toggle-btn');
+    var storyMentionPanel = document.getElementById('story-mention-panel');
+    var storyMentionSearchInput = document.getElementById('story-mention-search-input');
+    var storyMentionResults = document.getElementById('story-mention-results');
+    var storyHashtagToggleBtn = document.getElementById('story-hashtag-toggle-btn');
+    var storyHashtagPanel = document.getElementById('story-hashtag-panel');
+    var storyHashtagInput = document.getElementById('story-hashtag-input');
+    var storyHashtagAddBtn = document.getElementById('story-hashtag-add-btn');
+
+    // Aynı anda tek panel açık olsun — bir tanesini açmak diğerlerini kapatır
+    // (attach-menu'lerdeki AYNI "tekil açık panel" deseni).
+    var allStoryPickerPanels = [storyGifPanel, storyStickerPanel, storyMentionPanel, storyHashtagPanel];
+    function closeAllStoryPickerPanels(except) {
+        allStoryPickerPanels.forEach(function (p) { if (p && p !== except) p.hidden = true; });
+    }
+    function toggleStoryPickerPanel(panel) {
+        if (!panel) return;
+        var willOpen = panel.hidden;
+        closeAllStoryPickerPanels(willOpen ? panel : null);
+        panel.hidden = !willOpen;
+    }
+
+    function tryAddLayer(type, data) {
+        if (!storyEditor || !storyEditor.canAddMore()) return null;
+        return storyEditor.addLayer(type, data);
+    }
+
+    // --- GIF ---
+    if (storyGifToggleBtn && storyGifPanel) {
+        storyGifToggleBtn.addEventListener('click', function () {
+            toggleStoryPickerPanel(storyGifPanel);
+            if (!storyGifPanel.hidden) runGifSearch('');
+        });
+    }
+    var gifSearchDebounce = null;
+    function runGifSearch(query) {
+        if (storyGifLoadingMsg) storyGifLoadingMsg.hidden = false;
+        if (storyGifResults) storyGifResults.innerHTML = '';
+        window.StoryLayers.searchGifs(query, function (gifs) {
+            if (storyGifLoadingMsg) storyGifLoadingMsg.hidden = true;
+            if (!storyGifResults) return;
+            storyGifResults.innerHTML = '';
+            gifs.forEach(function (gif) {
+                var img = document.createElement('img');
+                img.src = gif.preview || gif.url;
+                img.alt = 'GIF';
+                img.addEventListener('click', function () {
+                    tryAddLayer('image', { url: gif.url });
+                    storyGifPanel.hidden = true;
+                });
+                storyGifResults.appendChild(img);
+            });
+        });
+    }
+    if (storyGifSearchInput) {
+        storyGifSearchInput.addEventListener('input', function () {
+            clearTimeout(gifSearchDebounce);
+            var q = storyGifSearchInput.value;
+            gifSearchDebounce = setTimeout(function () { runGifSearch(q); }, 400);
+        });
+    }
+
+    // --- Sticker ---
+    if (storyStickerToggleBtn && storyStickerPanel) {
+        storyStickerToggleBtn.addEventListener('click', function () {
+            toggleStoryPickerPanel(storyStickerPanel);
+            if (!storyStickerPanel.hidden) {
+                window.StoryLayers.fetchMyStickers(function (stickers) {
+                    if (!storyStickerResults) return;
+                    storyStickerResults.innerHTML = '';
+                    stickers.forEach(function (sticker) {
+                        var img = document.createElement('img');
+                        img.src = sticker.image_url;
+                        img.alt = 'Sticker';
+                        img.addEventListener('click', function () {
+                            tryAddLayer('image', { url: sticker.image_url });
+                            storyStickerPanel.hidden = true;
+                        });
+                        storyStickerResults.appendChild(img);
+                    });
+                });
+            }
+        });
+    }
+
+    // --- Bahset (mention) ---
+    if (storyMentionToggleBtn && storyMentionPanel) {
+        storyMentionToggleBtn.addEventListener('click', function () {
+            toggleStoryPickerPanel(storyMentionPanel);
+            if (!storyMentionPanel.hidden && storyMentionSearchInput) storyMentionSearchInput.focus();
+        });
+    }
+    var mentionSearchDebounce = null;
+    if (storyMentionSearchInput) {
+        storyMentionSearchInput.addEventListener('input', function () {
+            clearTimeout(mentionSearchDebounce);
+            var q = storyMentionSearchInput.value;
+            mentionSearchDebounce = setTimeout(function () {
+                window.StoryLayers.searchMentionUsers(q, function (users) {
+                    if (!storyMentionResults) return;
+                    storyMentionResults.innerHTML = '';
+                    users.forEach(function (user) {
+                        if (!user.username) return;
+                        var btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'story-picker-list-item';
+                        if (user.avatar_url) {
+                            var img = document.createElement('img');
+                            img.src = user.avatar_url;
+                            img.alt = '';
+                            btn.appendChild(img);
+                        }
+                        var span = document.createElement('span');
+                        span.textContent = '@' + user.username;
+                        btn.appendChild(span);
+                        btn.addEventListener('click', function () {
+                            tryAddLayer('mention', { username: user.username });
+                            storyMentionPanel.hidden = true;
+                            storyMentionSearchInput.value = '';
+                            storyMentionResults.innerHTML = '';
+                        });
+                        storyMentionResults.appendChild(btn);
+                    });
+                });
+            }, 400);
+        });
+    }
+
+    // --- Etiket (hashtag) ---
+    if (storyHashtagToggleBtn && storyHashtagPanel) {
+        storyHashtagToggleBtn.addEventListener('click', function () {
+            toggleStoryPickerPanel(storyHashtagPanel);
+            if (!storyHashtagPanel.hidden && storyHashtagInput) storyHashtagInput.focus();
+        });
+    }
+    function submitStoryHashtag() {
+        if (!storyHashtagInput) return;
+        var tag = storyHashtagInput.value.trim().replace(/^#/, '').toLowerCase();
+        if (!tag) return;
+        tryAddLayer('hashtag', { tag: tag });
+        storyHashtagInput.value = '';
+        storyHashtagPanel.hidden = true;
+    }
+    if (storyHashtagAddBtn) storyHashtagAddBtn.addEventListener('click', submitStoryHashtag);
+    if (storyHashtagInput) {
+        storyHashtagInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); submitStoryHashtag(); }
         });
     }
 
@@ -665,15 +826,15 @@
 
         pollContainer.appendChild(widget);
 
-        // Anket widget'ını konumlandır (poll.position_x, position_y, scale)
+        // Anket widget'ını konumlandır — StoryLayers'ın paylaşılan builder'ı
+        // (composer önizlemesiyle AYNI kod yolu, rotation dahil).
         if (pollWidget) {
-            var posX = (poll.position_x !== undefined) ? poll.position_x : 0.5;
-            var posY = (poll.position_y !== undefined) ? poll.position_y : 0.5;
-            var scale = (poll.scale !== undefined) ? poll.scale : 1;
-
-            pollWidget.style.left = (posX * 100) + '%';
-            pollWidget.style.top = (posY * 100) + '%';
-            pollWidget.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+            window.StoryLayers.applyTransform(pollWidget, {
+                position_x: (poll.position_x !== undefined && poll.position_x !== null) ? poll.position_x : 0.5,
+                position_y: (poll.position_y !== undefined && poll.position_y !== null) ? poll.position_y : 0.5,
+                scale: (poll.scale !== undefined && poll.scale !== null) ? poll.scale : 1,
+                rotation: (poll.rotation !== undefined && poll.rotation !== null) ? poll.rotation : 0,
+            });
         }
     }
 
@@ -702,8 +863,15 @@
             fill.style.width = i < index ? '100%' : '0%';
         });
 
+        // Çoklu metin katmanı özelliğiyle metin artık overlay_elements
+        // içinde bir "text" elemanı olarak da gelebilir — VARSA eski tekil
+        // `caption` yolu ÇİZİLMEZ, aksi halde metin ÇİFT görünürdü (bkz.
+        // app/stories.py::parse_overlay_elements "çift render kuralı" yorumu,
+        // native StoryViewerScreen.kt'deki AYNI guard).
+        var hasTextLayer = (s.overlay_elements || []).some(function (e) { return e.type === 'text'; });
+
         viewerTime.textContent = timeAgo(s.created_at);
-        viewerCaption.hidden = !s.caption;
+        viewerCaption.hidden = hasTextLayer || !s.caption;
         viewerCaption.textContent = s.caption || '';
 
         // Altyazı konumu: composer'da sürüklenen konum (0-1 arası oran) —
@@ -720,6 +888,11 @@
         // hikayenin rengi SIZMASIN diye caption_color yoksa boşa (CSS
         // varsayılanı beyaza) döner, koşulsuz her seferinde yazılır.
         viewerCaption.style.color = s.caption_color || '';
+        // caption_style pil render'ı — web viewer'ında eskiden HİÇ YOKTU,
+        // text katmanlarıyla AYNI .pill-light/.pill-dark class'ları (gerçek
+        // WYSIWYG). Koşulsuz her seferinde uygulanır/kaldırılır (sızma yok).
+        viewerCaption.classList.toggle('pill-light', s.caption_style === 'pill_light');
+        viewerCaption.classList.toggle('pill-dark', s.caption_style === 'pill_dark');
 
         viewerVideo.pause();
         viewerVideo.hidden = true;
@@ -731,6 +904,15 @@
         // ekranda kalıyordu (medya reset'inin parçası)
         var staleTextSlide = document.querySelector('#story-media-area .story-text-slide');
         if (staleTextSlide) staleTextSlide.remove();
+
+        // Çoklu katman render'ı (metin/GIF-sticker/mention/hashtag) — ÖNCE
+        // kendi temizliğini yapar (bkz. StoryLayers.clearViewerLayers),
+        // düğümler HER slide'da SIFIRDAN oluşturulur (stil sızıntısı riski
+        // yapısal olarak ortadan kalkar). Callback verilmez — mention/hashtag
+        // `<a href>`'leri varsayılan tarayıcı navigasyonuyla çalışır (bu bir
+        // SPA değil, tam sayfa geçişi HER YERDE normal davranış).
+        var storyMediaAreaEl = document.getElementById('story-media-area');
+        if (storyMediaAreaEl) window.StoryLayers.renderViewerLayers(storyMediaAreaEl, s.overlay_elements);
 
         // Anket render'ı (varsa)
         if (pollWidget && pollContainer) {
@@ -753,18 +935,25 @@
                 var textSlide = document.createElement('div');
                 textSlide.className = 'story-text-slide';
                 textSlide.style.backgroundColor = s.background_color;
-                var p = document.createElement('p');
-                p.textContent = s.caption || '';
-                // <p> aynı caption_position_x/y'e göre konumlanır (dış div
-                // tam ekranı kaplayan arkaplan konteyner olarak kalır)
-                p.style.left = (captionPosX * 100) + '%';
-                p.style.top = (captionPosY * 100) + '%';
-                p.style.transform = 'translate(-50%, -50%)';
-                // Yazı rengi: her seferinde YENİDEN oluşturulan bir <p>, sızma
-                // riski yok — caption_color varsa uygula, yoksa CSS varsayılanı
-                // (beyaz) geçerli kalsın diye hiç dokunma.
-                if (s.caption_color) p.style.color = s.caption_color;
-                textSlide.appendChild(p);
+                // hasTextLayer İSE metin zaten YUKARIDAKİ renderViewerLayers()
+                // tarafından `.story-overlay-layer` olarak (bu renkli slide'ın
+                // ÜSTÜNDE, mediaArea'ya kardeş olarak) çiziliyor — burada
+                // AYRICA bir <p> eklemek ÇİFT görünüme yol açardı, bu yüzden
+                // SADECE eski (göç etmemiş) satırlar için <p> oluşturulur.
+                if (!hasTextLayer) {
+                    var p = document.createElement('p');
+                    p.textContent = s.caption || '';
+                    // <p> aynı caption_position_x/y'e göre konumlanır (dış div
+                    // tam ekranı kaplayan arkaplan konteyner olarak kalır)
+                    p.style.left = (captionPosX * 100) + '%';
+                    p.style.top = (captionPosY * 100) + '%';
+                    p.style.transform = 'translate(-50%, -50%)';
+                    // Yazı rengi: her seferinde YENİDEN oluşturulan bir <p>, sızma
+                    // riski yok — caption_color varsa uygula, yoksa CSS varsayılanı
+                    // (beyaz) geçerli kalsın diye hiç dokunma.
+                    if (s.caption_color) p.style.color = s.caption_color;
+                    textSlide.appendChild(p);
+                }
                 mediaArea.insertBefore(textSlide, mediaArea.firstChild);
             }
 
@@ -888,6 +1077,10 @@
                 // Buton tıklandıysa atla
                 if (e.target.classList && (e.target.classList.contains('story-nav-btn') ||
                     e.target.classList.contains('story-nav-zone'))) return;
+                // Mention/hashtag linkine tıklamak (StoryLayers.renderViewerLayers)
+                // AYRICA duraklatmayı TETİKLEMESİN — link zaten kendi navigasyonunu
+                // yapıyor, sayfa hemen ayrılacak.
+                if (e.target.closest('a.story-overlay-layer')) return;
                 // Duraklat/devam
                 setPaused(!isPaused);
             }
