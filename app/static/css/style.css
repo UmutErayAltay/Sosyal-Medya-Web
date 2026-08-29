@@ -2026,23 +2026,21 @@ body.navbar-hidden .post-detail-sidebar { top: 16px; }
 
 /* Hikaye ekleme modalı — görsel/video butonları (attach-menu'nun dropdown
    bağlamı dışında, doğrudan modal içinde görünür) */
-.story-attach-row { display: flex; gap: 12px; flex-wrap: wrap; }
+/* İkon-sadece dairesel araç çubuğu — kullanıcı raporu ("web'in hikaye
+   paylaşma kısmı kötü görünüyor"): 9 metin-etiketli hap buton 2 satıra
+   taşıp dağınık duruyordu. Native'in sol kenar araç çubuğuyla (StoryToolButton)
+   AYNI görsel dil — ikon + `title` tooltip, metin `.sr-only` ile ekran
+   okuyucular için korunuyor (erişilebilirlik kaybı YOK, sadece görsel). */
+.story-attach-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .story-attach-label {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--border); color: var(--text); border-radius: 999px;
-    padding: 8px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
-    /* #story-poll-toggle-btn bu class'ı bir <button>'a uyguluyor — <label>'ların
-       aksine <button> tarayıcı varsayılan border/font/appearance/line-height
-       taşır (kullanıcı raporu: anket butonu diğer ikisinden farklı görünüyor).
-       border/appearance/line-height resetlense DAHİ `<button>` bu satırda
-       (`.story-attach-row`, flex) hâlâ `<label>`lardan ~12px daha uzun
-       render ediliyordu (Chromium'un form kontrolü kutu modeli quirk'i,
-       auto height ile giderilemedi) — bu yüzden içerik bazlı auto height'a
-       güvenmek yerine SABİT height ile üçü de garantili eşitleniyor. */
-    border: none; font-family: inherit; line-height: inherit;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    background: var(--border); color: var(--text); cursor: pointer;
+    border: none; font-family: inherit;
     -webkit-appearance: none; appearance: none;
-    height: 37px; box-sizing: border-box;
+    box-sizing: border-box; transition: background 0.15s;
 }
+.story-attach-label svg { width: 18px; height: 18px; }
 .story-attach-label:hover { background: var(--muted); color: var(--card); }
 
 /* Hikaye görüntüleyici — tam ekrana yakın, koyu, ilerleme çubuklu */
@@ -2181,20 +2179,25 @@ body.navbar-hidden .post-detail-sidebar { top: 16px; }
    tamamen şeffaf kalıp arkasındaki modal karanlığıyla karışıyordu — gerçek
    bug, bulunup `--card`'a düzeltildi). */
 .story-media-preview-wrap {
-    position: relative; width: 180px; aspect-ratio: 9 / 16;
+    position: relative; width: 240px; aspect-ratio: 9 / 16;
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
     overflow: hidden; margin: 0;
 }
 /* İçerik GERÇEK görüntüleyici referans boyutunda (420×746.67 — .story-viewer'ın
-   max-width:420px'iyle aynı 9:16 kutu) inşa edilip görünür 180px kutuya
-   ORANTILI küçültülür (scale: 180/420 = 0.4286). Anket/yazı gibi SABİT px
-   boyutlu öğeler böylece gerçek boyutuna göre DOĞRU orantıda görünür —
-   önceden içerik hep aynı ham px'te render olup küçük kutuda OLDUĞUNDAN
-   BÜYÜK görünüyordu (kullanıcı raporu: "tam paylaşılacağı boyutta gözükmüyor"). */
+   max-width:420px'iyle aynı 9:16 kutu) inşa edilip görünür 240px kutuya
+   ORANTILI küçültülür (scale: 240/420 = 0.5714 — kullanıcı raporu "web'in
+   hikaye paylaşma kısmı kötü görünüyor" sonrası 180px'ten büyütüldü, katman
+   sürükleme/pinch hassasiyeti için de daha kullanılabilir). Anket/yazı gibi
+   SABİT px boyutlu öğeler böylece gerçek boyutuna göre DOĞRU orantıda
+   görünür. Arka plan RENGİ/MEDYA seçilmemişse KOYU varsayılan (gerçek
+   viewer'ın `.story-media-area` siyah zeminiyle AYNI) — önceden bu kutu
+   düz beyazdı, üstündeki varsayılan BEYAZ metin (bkz. .story-layer-text-content)
+   neredeyse görünmez oluyordu (kullanıcı raporu). */
 .story-media-preview-inner {
     position: absolute; top: 0; left: 0; width: 420px; height: 746.67px;
-    transform: scale(0.4286); transform-origin: top left;
+    transform: scale(0.5714); transform-origin: top left;
     display: flex; align-items: center; justify-content: center;
+    background: #1a1a2e;
 }
 .story-poll-preview-widget {
     position: absolute; cursor: move; touch-action: none;
@@ -2335,15 +2338,28 @@ a.story-sticker-pill { cursor: pointer; }
    olduklarından tıklanabilir olsalardı hikaye ilerletme ÖLÜRDÜ), SADECE
    mention/hashtag (<a>) tıklanabilir kalır. */
 .story-overlay-layer { position: absolute; z-index: 6; }
+/* GIF/sticker (Image) katmanının GERÇEK boyutu — composer'daki AYNI 120px
+   (.story-layer-image .story-layer-content) VE native'in AYNI sabit 120.dp'i
+   (StoryViewerScreen.kt) ile birebir eşleşir. Viewer'ın referans genişliği
+   (`.story-viewer` max-width:420px) composer'ın 420px iç kutusuyla AYNI
+   olduğu için bu px değeri EK bir ölçekleme GEREKTİRMEDEN doğrudan eşleşir.
+   Bu kural YOKKEN mobilde eklenen bir GIF/sticker web'de KENDİ doğal
+   çözünürlüğünde (yüzlerce px) render oluyordu — kullanıcı raporu:
+   "gif ler büyük duruyor". */
+img.story-overlay-layer { width: 120px; height: auto; }
 
 /* GIF/sticker/mention/hashtag seçim panelleri — .story-bg-palette/
    .sticker-picker ile AYNI "toggle butonunun altında açılan basit panel"
    deseni, sekmesiz (native MediaPickerSheet'in web'deki basitleştirilmiş
-   karşılığı). */
+   karşılığı). max-width YOKKEN panel modalın TAM genişliğine (~900px)
+   yayılıp `1fr` grid sütunları GIF/sticker'ları dev boyutlu kare kutulara
+   büyütüyordu (kullanıcı raporu: "web'in hikaye paylaşma kısmı kötü
+   görünüyor") — hem panel hem grid hücreleri artık SABİT küçük boyutlu. */
 .story-picker-panel {
     display: flex; flex-direction: column; gap: 8px; padding: 10px;
-    margin: 4px 0; background: var(--card); border: 1px solid var(--border);
-    border-radius: var(--radius); max-height: 260px; overflow-y: auto;
+    margin: 4px 0; max-width: 300px; background: var(--card);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    max-height: 260px; overflow-y: auto;
 }
 .story-picker-panel[hidden] { display: none; }
 .story-picker-panel input[type="text"] {
@@ -2351,10 +2367,10 @@ a.story-sticker-pill { cursor: pointer; }
     font-size: 14px; background: var(--bg); color: var(--text);
 }
 .story-picker-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    display: grid; grid-template-columns: repeat(3, 84px); gap: 8px;
 }
 .story-picker-grid img {
-    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px;
+    width: 84px; height: 84px; object-fit: cover; border-radius: 8px;
     cursor: pointer; border: none; background: var(--border);
 }
 .story-picker-grid img:hover { opacity: 0.85; }

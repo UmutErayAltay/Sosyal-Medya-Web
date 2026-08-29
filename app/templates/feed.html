@@ -413,19 +413,22 @@
                 </div>
             </div>
 
-            {# Butonlar en altta, tam genişlikte #}
+            {# Butonlar en altta, tam genişlikte — ikon-sadece dairesel araç
+               çubuğu (bkz. style.css .story-attach-label yorumu), metin
+               `title` (hover tooltip) + `.sr-only` (ekran okuyucu) olarak
+               korunuyor. #}
             <div class="story-attach-row">
-                <label class="story-attach-label" for="story-image-input">{{ icons.icon('image', size=14) }} Görsel</label>
+                <label class="story-attach-label" for="story-image-input" title="Görsel">{{ icons.icon('image', size=18) }}<span class="sr-only">Görsel</span></label>
                 <input type="file" name="image" accept="image/png,image/jpeg,image/gif,image/webp" hidden id="story-image-input">
-                <label class="story-attach-label" for="story-video-input">{{ icons.icon('video', size=14) }} Video</label>
+                <label class="story-attach-label" for="story-video-input" title="Video">{{ icons.icon('video', size=18) }}<span class="sr-only">Video</span></label>
                 <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" hidden id="story-video-input">
-                <button type="button" class="story-attach-label" id="story-add-text-btn">{{ icons.icon('edit-2', size=14) }} Yazı</button>
-                <button type="button" class="story-attach-label" id="story-gif-toggle-btn">{{ icons.icon('film', size=14) }} GIF</button>
-                <button type="button" class="story-attach-label" id="story-sticker-toggle-btn">{{ icons.icon('grid', size=14) }} Sticker</button>
-                <button type="button" class="story-attach-label" id="story-mention-toggle-btn">{{ icons.icon('user', size=14) }} Bahset</button>
-                <button type="button" class="story-attach-label" id="story-hashtag-toggle-btn">{{ icons.icon('tag', size=14) }} Etiket</button>
-                <button type="button" class="story-attach-label" id="story-poll-toggle-btn">{{ icons.icon('bar-chart-2', size=14) }} Anket</button>
-                <button type="button" class="story-attach-label" id="story-bg-toggle-btn">{{ icons.icon('palette', size=14) }} Renk</button>
+                <button type="button" class="story-attach-label" id="story-add-text-btn" title="Yazı ekle">{{ icons.icon('edit-2', size=18) }}<span class="sr-only">Yazı ekle</span></button>
+                <button type="button" class="story-attach-label" id="story-gif-toggle-btn" title="GIF ekle">{{ icons.icon('film', size=18) }}<span class="sr-only">GIF ekle</span></button>
+                <button type="button" class="story-attach-label" id="story-sticker-toggle-btn" title="Sticker ekle">{{ icons.icon('grid', size=18) }}<span class="sr-only">Sticker ekle</span></button>
+                <button type="button" class="story-attach-label" id="story-mention-toggle-btn" title="Bahset">{{ icons.icon('user', size=18) }}<span class="sr-only">Bahset</span></button>
+                <button type="button" class="story-attach-label" id="story-hashtag-toggle-btn" title="Etiket ekle">{{ icons.icon('tag', size=18) }}<span class="sr-only">Etiket ekle</span></button>
+                <button type="button" class="story-attach-label" id="story-poll-toggle-btn" title="Anket ekle">{{ icons.icon('bar-chart-2', size=18) }}<span class="sr-only">Anket ekle</span></button>
+                <button type="button" class="story-attach-label" id="story-bg-toggle-btn" title="Arka plan rengi">{{ icons.icon('palette', size=18) }}<span class="sr-only">Arka plan rengi</span></button>
             </div>
             <button type="submit" class="btn btn-primary btn-full">Paylaş</button>
         </form>
