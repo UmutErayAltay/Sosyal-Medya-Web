@@ -11,6 +11,14 @@ from .cache import invalidate
 
 bp = Blueprint("social", __name__)
 
+
+def _escape_like(value: str) -> str:
+    """app/stories.py::_escape_like ile AYNI gerekçe — kullanıcı arama
+    kutusuna `%`/`_` yazması, ilike()'a giden desende joker karakter olarak
+    yorumlanıp beklenenden geniş/farklı sonuç döndürüyordu (code review
+    bulgusu)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 # Yorum/yanıt bildirim YAZMALARI (notify + notify_mentions) yanıtı bekletmesin
 # diye kalıcı arka plan havuzu (messaging/views.py _write_pool ile aynı desen).
 # Yavaş/kesintili mobil bağlantıda add_comment()/reply_comment() ekleme
@@ -600,7 +608,7 @@ def search_mentions():
 
     try:
         candidates = sb.table("profiles").select("id, username, avatar_url").ilike(
-            "username", q + "%"
+            "username", _escape_like(q) + "%"
         ).eq("is_banned", False).limit(20).execute().data
     except Exception:
         candidates = []

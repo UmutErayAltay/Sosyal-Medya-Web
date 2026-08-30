@@ -267,7 +267,7 @@
             <h2 id="story-modal-title">Hikaye Paylaş</h2>
             <button type="button" class="modal-close" id="close-story-modal" aria-label="Kapat">{{ icons.icon('x', size=16) }}</button>
         </div>
-        <form action="{{ url_for('stories.create_story') }}" method="post" enctype="multipart/form-data" class="modal-body story-modal-body">
+        <form id="story-create-form" action="{{ url_for('stories.create_story') }}" method="post" enctype="multipart/form-data" class="modal-body story-modal-body">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="story-form-columns">
@@ -426,7 +426,7 @@
                 </label>
                 <label>{{ icons.icon('repeat', size=14) }}
                     <span class="sr-only">Döndürme</span>
-                    <input type="range" id="story-layer-rotation-slider" min="-180" max="180" step="1" value="0">
+                    <input type="range" id="story-layer-rotation-slider" min="0" max="360" step="1" value="0">
                 </label>
             </div>
 

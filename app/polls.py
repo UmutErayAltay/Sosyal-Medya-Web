@@ -33,36 +33,41 @@ def create_poll(sb, options: list[str], post_id: str = None, story_id: str = Non
     if (post_id and story_id) or (not post_id and not story_id):
         return
 
-    try:
-        poll_data = {
-            "position_x": position_x,
-            "position_y": position_y,
-            "scale": scale,
-            "rotation": rotation,
-        }
-        if post_id:
-            poll_data["post_id"] = post_id
-        if story_id:
-            poll_data["story_id"] = story_id
+    poll_data = {
+        "position_x": position_x,
+        "position_y": position_y,
+        "scale": scale,
+        "rotation": rotation,
+    }
+    if post_id:
+        poll_data["post_id"] = post_id
+    if story_id:
+        poll_data["story_id"] = story_id
 
-        try:
-            poll = sb.table("polls").insert(poll_data).execute()
-        except Exception:
-            # sql/migration_story_overlay_rotation.sql henüz uygulanmamışsa
-            # `rotation` kolonu yoktur — TÜM anket oluşturmayı (post VEYA
-            # hikaye) sessizce kırmak yerine (dıştaki except zaten yutuyor,
-            # kullanıcı "anket eklenemedi" görürdü) migration öncesi
-            # kolonlarla tekrar dene. story_data'daki AYNI "eski kolonlarla
-            # fallback" deseni (bkz. app/stories.py::create_story).
-            poll_data.pop("rotation", None)
-            poll = sb.table("polls").insert(poll_data).execute()
-        poll_id = poll.data[0]["id"]
-        sb.table("poll_options").insert([
-            {"poll_id": poll_id, "option_text": opt, "position": i}
-            for i, opt in enumerate(options)
-        ]).execute()
-    except Exception:
-        pass
+    try:
+        poll = sb.table("polls").insert(poll_data).execute()
+    except Exception as e:
+        if "does not exist" not in str(e):
+            raise
+        # sql/migration_story_overlay_rotation.sql henüz uygulanmamışsa
+        # `rotation` kolonu yoktur — o durumda (SADECE o durumda) migration
+        # öncesi kolonlarla tekrar dene. story_data'daki AYNI "eski
+        # kolonlarla fallback" deseni (bkz. app/stories.py::create_story).
+        # Başka türden bir hata (RLS, ağ, geçersiz story_id/post_id) burada
+        # YUTULMAZ — çağıranın kendi except'i (bkz. app/stories.py,
+        # app/api_v1/stories.py, app/routes/posts.py, app/api_v1/
+        # interactions.py) artık gerçekten tetiklenip kullanıcıya "anket
+        # eklenemedi" gösterebilsin diye (code review bulgusu: bu fonksiyon
+        # eskiden HER hatayı burada sessizce yutuyordu, çağıranların kendi
+        # except'leri hiçbir zaman çalışmıyordu).
+        poll_data.pop("rotation", None)
+        poll = sb.table("polls").insert(poll_data).execute()
+
+    poll_id = poll.data[0]["id"]
+    sb.table("poll_options").insert([
+        {"poll_id": poll_id, "option_text": opt, "position": i}
+        for i, opt in enumerate(options)
+    ]).execute()
 
 
 def attach_polls(sb, posts: list, me: str) -> None:

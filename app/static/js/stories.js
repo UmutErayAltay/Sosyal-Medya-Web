@@ -63,6 +63,11 @@
                 if (storyOverlayElementsInput) {
                     storyOverlayElementsInput.value = serialized.length ? JSON.stringify(serialized) : '';
                 }
+                // Wheel/pinch jesti aktif katmanın scale/rotation'ını
+                // değiştirmiş olabilir — panel açıkken slider'lar bunu
+                // yansıtmazsa eski değerde donuk kalırdı (code review
+                // bulgusu, bkz. syncActiveLayerSliders tanımı).
+                syncActiveLayerSliders();
                 // Aktif katman (× butonuyla) silinmiş olabilir — kontrol
                 // panelini artık VAR OLMAYAN bir katmana bağlı bırakma.
                 if (activeLayerKind === 'layer' && activeLayerId && !storyEditor.findLayer(activeLayerId)) {
@@ -145,6 +150,22 @@
         activeLayerKind = null;
         activeLayerId = null;
         if (storyLayerControls) storyLayerControls.hidden = true;
+    }
+
+    // setActiveLayerControl() sadece pointerdown'da (bkz. onActivate) çağrılıyordu
+    // — wheel/pinch jesti panel AÇIKKEN aynı katmanı değiştirirse slider'lar
+    // eski değerde donuk kalıyordu (code review bulgusu). Aktif katmanın GÜNCEL
+    // state'ini okuyup slider'ları eşitler; her jest sonrası (onChange) çağrılır.
+    function syncActiveLayerSliders() {
+        var state = null;
+        if (activeLayerKind === 'poll') {
+            state = pollState;
+        } else if (activeLayerKind === 'layer' && activeLayerId && storyEditor) {
+            state = storyEditor.findLayer(activeLayerId);
+        }
+        if (!state) return;
+        if (storyLayerScaleSlider) storyLayerScaleSlider.value = state.scale;
+        if (storyLayerRotationSlider) storyLayerRotationSlider.value = state.rotation;
     }
 
     function applyActiveLayerPatch(patch) {
@@ -250,6 +271,38 @@
     if (storyModal) {
         storyModal.addEventListener('click', function (e) {
             if (e.target === storyModal) closeStoryModal();
+        });
+    }
+
+    // Composer'ı fetch ile gönder — eskiden düz form-POST'tu, herhangi bir
+    // hata (boş hikaye, yükleme hatası, anket eklenemedi vb.) TAM SAYFA
+    // redirect+flash'a düşüp kullanıcının yerleştirdiği tüm katmanları
+    // kaybettiriyordu. Backend'in JSON modu (`X-Requested-With: fetch`,
+    // bkz. app/stories.py::create_story) zaten bunun için yazılmıştı ama
+    // composer hiç kullanmıyordu (code review bulgusu — ölü kod). Başarı
+    // yolunda davranış AYNEN korunur (sayfa yenilenir, hikaye çubuğu
+    // güncel gelir) — sadece hata yolunda artık composer state korunuyor.
+    var storyCreateForm = document.getElementById('story-create-form');
+    var storyCreateSubmitBtn = storyCreateForm ? storyCreateForm.querySelector('button[type="submit"]') : null;
+    if (storyCreateForm) {
+        storyCreateForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            if (storyCreateSubmitBtn) storyCreateSubmitBtn.disabled = true;
+            try {
+                var res = await fetch(storyCreateForm.action, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'fetch' },
+                    body: new FormData(storyCreateForm),
+                });
+                var data = await res.json().catch(function () { return {}; });
+                if (!res.ok || !data.ok) {
+                    throw new Error(data.error || 'Hikaye paylaşılamadı.');
+                }
+                window.location.reload();
+            } catch (err) {
+                window.appAlert(err.message || 'Hikaye paylaşılamadı.');
+                if (storyCreateSubmitBtn) storyCreateSubmitBtn.disabled = false;
+            }
         });
     }
 
@@ -376,6 +429,10 @@
         if (rotationInput) rotationInput.value = pollState.rotation.toFixed(1);
         if (storyPollScaleSlider) storyPollScaleSlider.value = pollState.scale;
         if (storyPollScaleDisplay) storyPollScaleDisplay.textContent = Math.round(pollState.scale * 100) + '%';
+        // Anket aktifken paylaşılan Boyut/Döndürme paneli de AÇIK olabilir —
+        // #story-poll-scale-slider'la aynı state'i taşıyan İKİNCİ bir kontrol,
+        // burada eşitlenmezse ikisi anlaşmazlığa düşerdi (code review bulgusu).
+        syncActiveLayerSliders();
     }
 
     function resetPollState() {
@@ -642,6 +699,17 @@
             var q = storyGifSearchInput.value;
             gifSearchDebounce = setTimeout(function () { runGifSearch(q); }, 400);
         });
+        // Bu panel #story-modal'ın FORM'u İÇİNDE — bir submit butonu varken
+        // metin input'unda Enter, tarayıcının implicit form submit'ini
+        // tetikler (storyHashtagInput'taki AYNI guard, code review bulgusu:
+        // GIF/mention kutularında unutulmuştu, Enter'a basmak yarım kalan
+        // hikayeyi erken paylaşıp tüm katmanları kaybettiriyordu).
+        storyGifSearchInput.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            clearTimeout(gifSearchDebounce);
+            runGifSearch(storyGifSearchInput.value);
+        });
     }
 
     // --- Sticker ---
@@ -675,38 +743,47 @@
         });
     }
     var mentionSearchDebounce = null;
+    function runMentionSearch(q) {
+        window.StoryLayers.searchMentionUsers(q, function (users) {
+            if (!storyMentionResults) return;
+            storyMentionResults.innerHTML = '';
+            users.forEach(function (user) {
+                if (!user.username) return;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'story-picker-list-item';
+                if (user.avatar_url) {
+                    var img = document.createElement('img');
+                    img.src = user.avatar_url;
+                    img.alt = '';
+                    btn.appendChild(img);
+                }
+                var span = document.createElement('span');
+                span.textContent = '@' + user.username;
+                btn.appendChild(span);
+                btn.addEventListener('click', function () {
+                    tryAddLayer('mention', { username: user.username });
+                    storyMentionPanel.hidden = true;
+                    storyMentionSearchInput.value = '';
+                    storyMentionResults.innerHTML = '';
+                });
+                storyMentionResults.appendChild(btn);
+            });
+        });
+    }
     if (storyMentionSearchInput) {
         storyMentionSearchInput.addEventListener('input', function () {
             clearTimeout(mentionSearchDebounce);
             var q = storyMentionSearchInput.value;
-            mentionSearchDebounce = setTimeout(function () {
-                window.StoryLayers.searchMentionUsers(q, function (users) {
-                    if (!storyMentionResults) return;
-                    storyMentionResults.innerHTML = '';
-                    users.forEach(function (user) {
-                        if (!user.username) return;
-                        var btn = document.createElement('button');
-                        btn.type = 'button';
-                        btn.className = 'story-picker-list-item';
-                        if (user.avatar_url) {
-                            var img = document.createElement('img');
-                            img.src = user.avatar_url;
-                            img.alt = '';
-                            btn.appendChild(img);
-                        }
-                        var span = document.createElement('span');
-                        span.textContent = '@' + user.username;
-                        btn.appendChild(span);
-                        btn.addEventListener('click', function () {
-                            tryAddLayer('mention', { username: user.username });
-                            storyMentionPanel.hidden = true;
-                            storyMentionSearchInput.value = '';
-                            storyMentionResults.innerHTML = '';
-                        });
-                        storyMentionResults.appendChild(btn);
-                    });
-                });
-            }, 400);
+            mentionSearchDebounce = setTimeout(function () { runMentionSearch(q); }, 400);
+        });
+        // storyGifSearchInput'taki AYNI guard/gerekçe — form içindeki bir
+        // metin kutusunda Enter, implicit submit tetikler (code review bulgusu).
+        storyMentionSearchInput.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            clearTimeout(mentionSearchDebounce);
+            runMentionSearch(storyMentionSearchInput.value);
         });
     }
 

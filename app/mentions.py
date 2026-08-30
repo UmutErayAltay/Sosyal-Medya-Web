@@ -16,6 +16,15 @@ from .linkify_utils import apply_outside_anchors
 MENTION_RE = re.compile(r"@([\w.-]+)", re.UNICODE)
 
 
+def _escape_like(value: str) -> str:
+    """app/stories.py::_escape_like ile AYNI gerekçe — `\\w` (MENTION_RE)
+    `_` karakterini de kapsıyor, PostgREST'in ilike()'ı ham değeri Postgres
+    ILIKE desenine aktarıyor: "@a_b" gibi bir mention escape edilmeden
+    aranırsa `_` joker karakter olarak yorumlanıp `a?b` desenine uyan
+    RASTGELE bir kullanıcıya bildirim gidebiliyordu (code review bulgusu)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def extract_mentions(content: str) -> list[str]:
     """İçerikten benzersiz, küçük harfli kullanıcı adlarını (sırayı koruyarak) çıkarır."""
     if not content:
@@ -52,7 +61,7 @@ def notify_mentions(sb, *, actor_id: str, content: str,
         # farklı bir N+1 olduğu için burada dokunulmuyor).
         recipient_ids: list[str] = []
         for uname in usernames:
-            prof = sb.table("profiles").select("id").ilike("username", uname).execute().data
+            prof = sb.table("profiles").select("id").ilike("username", _escape_like(uname)).execute().data
             if not prof or prof[0]["id"] == actor_id:
                 continue
             if allowed_ids is not None and prof[0]["id"] not in allowed_ids:

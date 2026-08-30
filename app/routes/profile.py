@@ -16,6 +16,15 @@ from ..stories import _get_highlights
 from ..rate_limit import is_rate_limited
 
 
+def _escape_like(value: str) -> str:
+    """app/stories.py::_escape_like ile AYNI gerekçe — `username` burada
+    doğrudan bir URL path segmenti (`/u/<username>`); escape edilmeden
+    ilike()'a verilirse `%`/`_` joker karakter olarak yorumlanıp `/u/%`
+    gibi bir istek İLK eşleşen (rastgele) profili döndürüyordu (code
+    review bulgusu — enumeration/bilgi sızıntısı)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @bp.route("/u/<username>")
 @login_required
 @retry_on_connection_error
@@ -24,7 +33,7 @@ def profile(username):
     # ilike (case-insensitive) — mention linkleri/URL'ler kullanıcının YAZDIĞI
     # harfle (ör. "@Art") gelebilir, gerçek kullanıcı adı farklı harfte olabilir
     # ("art") — kullanıcı raporu: "büyük küçük harf farkı olmasın".
-    prof = sb.table("profiles").select("*").ilike("username", username).execute()
+    prof = sb.table("profiles").select("*").ilike("username", _escape_like(username)).execute()
     if not prof.data:
         abort(404)
     prof = prof.data[0]

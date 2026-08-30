@@ -9,7 +9,7 @@ dışı bırakıldı.
 from datetime import datetime, timezone
 import json
 import re
-from flask import Blueprint, request, redirect, url_for, session, flash, jsonify
+from flask import Blueprint, current_app, request, redirect, url_for, session, flash, jsonify
 from .decorators import login_required
 from .supabase_client import get_sb, retry_on_connection_error
 from .storage_helper import upload_image, upload_video
@@ -213,7 +213,15 @@ def parse_overlay_elements(sb, raw: str | None, me: str) -> tuple[list[dict], se
                 prof = sb.table("profiles").select("id, username").ilike(
                     "username", _escape_like(uname.strip())
                 ).execute().data
-            except Exception:
+            except Exception as e:
+                # "kullanıcı bulunamadı" (prof=[]) ile gerçek bir DB/ağ
+                # hatası burada AYNI şekilde ele alınıyor (dekoratif bir
+                # sticker yüzünden hikaye paylaşımı bloklanmasın diye,
+                # fonksiyonun geri kalanıyla AYNI fail-open felsefesi) —
+                # ama loglanmadan geçmesi, bir DB kesintisinin "kullanıcılar
+                # hep yazım hatası yapıyor" gibi görünmesine yol açardı
+                # (code review bulgusu).
+                current_app.logger.error(f"Mention sticker profil araması başarısız (username={uname!r}): {e}")
                 prof = []
             if not prof:
                 continue
@@ -528,13 +536,37 @@ def create_story():
     }
     try:
         result = sb.table("stories").insert(story_data).execute()
-    except Exception:
+    except Exception as e:
+        if "does not exist" not in str(e):
+            # Şema eksikliği DIŞINDA bir hata (ağ, RLS, tip uyuşmazlığı vb.)
+            # — "eski kolonlarla tekrar dene" yoluna sessizce düşmek burada
+            # YANLIŞ: o yol `visibility`'yi hiç yazmıyor, DB varsayılanı
+            # `public` olduğu için `close_friends` bekleyen bir hikaye
+            # SESSİZCE herkese açık paylaşılırdı (code review bulgusu —
+            # gizlilik ihlali). Gerçek hatayı logla, kullanıcıya net
+            # başarısızlık göster.
+            current_app.logger.error(f"Hikaye insert hatası: {e}")
+            return _fail("Hikaye paylaşılamadı.")
+        # Buraya yalnızca "kolon yok" (migration henüz uygulanmamış)
+        # hatasında düşülür. Yedek yol visibility/overlay_elements/
+        # background_color/caption_* alanlarını YAZAMIYOR — bu alanlardan
+        # herhangi biri varsayılanından farklı istenmişse (özellikle
+        # visibility != public) SESSİZCE düşürmek yerine paylaşımı reddet.
+        current_app.logger.error(f"Hikaye insert şeması eksik, eski kolonlara düşülüyor: {e}")
+        if visibility != "public" or overlay_elements or background_color or caption_color:
+            current_app.logger.error(
+                f"Hikaye insert şeması eksikken visibility={visibility!r} / overlay_elements/"
+                f"background_color/caption_color istendi — gizlilik/veri kaybını önlemek için "
+                "paylaşım reddedildi."
+            )
+            return _fail("Hikaye paylaşılamadı (özellik henüz aktif değil).")
         try:
             story_data_legacy = {
                 "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
             }
             result = sb.table("stories").insert(story_data_legacy).execute()
-        except Exception:
+        except Exception as e2:
+            current_app.logger.error(f"Hikaye insert (yedek yol) hatası: {e2}")
             return _fail("Hikaye paylaşılamadı (özellik henüz aktif değil).")
 
     story_id = result.data[0]["id"] if result.data else None
@@ -543,17 +575,35 @@ def create_story():
             create_poll(sb, poll_options, story_id=story_id,
                         position_x=poll_position_x, position_y=poll_position_y,
                         scale=poll_scale, rotation=poll_rotation)
-        except Exception:
-            return _fail("Hikaye paylaşıldı ama anket eklenemedi.")
+        except Exception as e:
+            current_app.logger.error(f"Hikaye anketi oluşturulamadı (story_id={story_id}): {e}")
+            # Hikayenin KENDİSİ zaten başarıyla oluşturuldu (story_id var) —
+            # bunu composer'a `error` gibi göstermek istemciyi (bkz.
+            # stories.js fetch handler) tekrar denemeye/aynı hikayeyi İKİNCİ
+            # kez paylaşmaya sürükleyebilirdi. api_create_story()'deki
+            # (native) AYNI `poll_error` deseni burada da: JSON modunda
+            # ok:true + poll_error bayrağıyla dönülür, JS'siz form-POST
+            # fallback'i (wants_json DEĞİLKEN) davranışı DEĞİŞMEDEN korunur
+            # (code review bulgusu).
+            if wants_json:
+                return jsonify(ok=True, story_id=story_id, poll_error=True)
+            flash("Hikaye paylaşıldı ama anket eklenemedi.", "error")
+            return redirect(url_for("routes.feed"))
 
     # @mention sticker bildirimleri — insert SONRASI (poll ile AYNI sıra),
-    # hikaye paylaşımını ASLA bloklamaz (dekoratif yan etki).
+    # hikaye paylaşımını ASLA bloklamaz (dekoratif yan etki). Per-recipient
+    # try/except: tek bir alıcıya bildirim gönderimi patlarsa AYNI istekteki
+    # diğer alıcılar da sessizce atlanıyordu (code review bulgusu) — artık
+    # her alıcı bağımsız, başarısızlık loglanıyor.
     if story_id and story_mention_recipient_ids:
-        try:
-            for recipient_id in story_mention_recipient_ids:
+        for recipient_id in story_mention_recipient_ids:
+            try:
                 notify_story_mention(sb, actor_id=me, recipient_id=recipient_id)
-        except Exception:
-            pass
+            except Exception as e:
+                current_app.logger.error(
+                    f"Hikaye mention bildirimi gönderilemedi (story_id={story_id}, "
+                    f"recipient_id={recipient_id}): {e}"
+                )
 
     if wants_json:
         return jsonify(ok=True, story_id=story_id)

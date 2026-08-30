@@ -1,4 +1,4 @@
-from flask import request, jsonify
+from flask import current_app, request, jsonify
 
 from . import bp
 from ._common import _str_field, api_login_required
@@ -403,7 +403,14 @@ def api_create_post():
             notify_mentions(sb, actor_id=me, content=content, post_id=post_id)
             notify_hashtag_followers(sb, actor_id=me, post_id=post_id, tags=extract_hashtags(content))
     if has_poll:
-        create_poll(sb, poll_options, post_id=post_id)
+        # create_poll() artık gerçek hatalarda raise ediyor (code review
+        # bulgusu — eskiden hepsini sessizce yutuyordu); post zaten
+        # oluşturuldu, anket başarısız olsa da post paylaşımı BLOKLANMAMALI
+        # — burada yakalanıp loglanıyor.
+        try:
+            create_poll(sb, poll_options, post_id=post_id)
+        except Exception as e:
+            current_app.logger.error(f"Post anketi oluşturulamadı (post_id={post_id}): {e}")
 
     post_res = sb.table("posts").select(
         "*, profiles!posts_user_id_fkey(username, avatar_url), likes(count), comments(count)"

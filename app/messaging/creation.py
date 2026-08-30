@@ -8,6 +8,14 @@ from ..notifications import notify
 from ..blocks import is_blocked_either_way, blocked_user_ids
 
 
+def _escape_like(value: str) -> str:
+    """app/stories.py::_escape_like ile AYNI gerekçe — kullanıcı arama
+    kutusuna `%`/`_` yazması, ilike()'a giden desende joker karakter olarak
+    yorumlanıp beklenenden geniş/farklı sonuç döndürüyordu (code review
+    bulgusu)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @bp.route("/new/<username>", methods=["POST"])
 @login_required
 @retry_on_connection_error
@@ -92,7 +100,7 @@ def share_targets():
         if len(q) < 2:
             return jsonify([])
         # Arama yapıldığında eşleşen kullanıcıları getir (kendisi hariç)
-        users = sb.table("profiles").select("id, username, avatar_url").ilike("username", f"%{q}%").neq("id", me).limit(20).execute().data
+        users = sb.table("profiles").select("id, username, avatar_url").ilike("username", f"%{_escape_like(q)}%").neq("id", me).limit(20).execute().data
         users = [u for u in users if u["id"] not in blocked_ids]
         return jsonify(users)
 

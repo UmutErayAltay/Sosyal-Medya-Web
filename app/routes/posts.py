@@ -2,7 +2,7 @@
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import time as _time
-from flask import render_template, request, redirect, url_for, session, abort, flash, make_response, jsonify
+from flask import render_template, request, redirect, url_for, session, abort, flash, make_response, jsonify, current_app
 from . import bp
 from ._common import (_my_id, _attach_post_metrics, attach_repost_of, fetch_sidebar_context,
                       fetch_stats_and_bio, PAGE_SIZE, _can_view_post)
@@ -418,7 +418,13 @@ def create_post():
         notify_mentions(sb, actor_id=_my_id(), content=content, post_id=post_id)
         notify_hashtag_followers(sb, actor_id=_my_id(), post_id=post_id, tags=extract_hashtags(content))
     if post_id and has_poll:
-        create_poll(sb, poll_options, post_id=post_id)
+        # create_poll() artık gerçek hatalarda raise ediyor (code review
+        # bulgusu); post zaten oluşturuldu, anket başarısız olsa da post
+        # paylaşımı BLOKLANMAMALI — burada yakalanıp loglanıyor.
+        try:
+            create_poll(sb, poll_options, post_id=post_id)
+        except Exception as e:
+            current_app.logger.error(f"Post anketi oluşturulamadı (post_id={post_id}): {e}")
 
     if is_draft:
         if is_scheduled:

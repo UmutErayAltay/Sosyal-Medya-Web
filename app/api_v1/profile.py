@@ -16,6 +16,15 @@ from ..cache import invalidate
 from ..notifications import notify
 
 
+def _escape_like(value: str) -> str:
+    """app/routes/profile.py::_escape_like ile AYNI gerekçe — `username`
+    burada doğrudan bir URL path segmenti; escape edilmeden ilike()'a
+    verilirse `%`/`_` joker karakter olarak yorumlanıp İLK eşleşen
+    (rastgele) profili döndürüyordu (code review bulgusu — enumeration/
+    bilgi sızıntısı)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # ----------------------- PROFİL (Faz 3, native Android profil ekranı) -----------------------
 # app/routes/profile.py + app/social.py'nin AYNI iş mantığı JSON'a taşınır.
 # BİLİNÇLİ kapsam dışı (ayrı bir sonraki iterasyon): highlights, bookmark_collections,
@@ -61,7 +70,7 @@ def api_profile(username):
     ayrı template'in JSON karşılığı, 200 ile döner).
     """
     sb = get_sb()
-    prof = sb.table("profiles").select("*").ilike("username", username).execute()
+    prof = sb.table("profiles").select("*").ilike("username", _escape_like(username)).execute()
     if not prof.data:
         return jsonify(error="not_found"), 404
     prof = prof.data[0]

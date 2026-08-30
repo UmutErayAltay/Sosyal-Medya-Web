@@ -149,6 +149,47 @@ test.describe('Story composer — multi-text layers', () => {
     expect(errors).toHaveLength(0);
   });
 
+  // code review bulgusu: GIF/mention arama kutuları #story-modal'ın FORM'u
+  // içinde — submit butonu varken Enter, tarayıcının implicit form
+  // submit'ini tetikliyordu (hashtag kutusunda zaten engellenmişti, bu
+  // ikisinde unutulmuştu). Enter'a basmak hikayeyi erken paylaşıp
+  // yerleştirilen tüm katmanları kaybettiriyordu.
+  test('Enter in the GIF search box does not submit the story form', async ({ page }) => {
+    let submitFired = false;
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('/stories/new')) submitFired = true;
+    });
+
+    await openStoryModal(page);
+    await page.locator('#story-add-text-btn').click();
+    await page.locator('#story-caption-input').fill('kaybolmamalı');
+    await page.locator('#story-gif-toggle-btn').click();
+    await page.locator('#story-gif-search-input').fill('cat');
+    await page.locator('#story-gif-search-input').press('Enter');
+
+    await expect(page.locator('#story-modal')).toBeVisible();
+    await expect(page.locator('.story-layer-text')).toHaveCount(1);
+    expect(submitFired).toBe(false);
+  });
+
+  test('Enter in the mention search box does not submit the story form', async ({ page }) => {
+    let submitFired = false;
+    page.on('request', (req) => {
+      if (req.method() === 'POST' && req.url().includes('/stories/new')) submitFired = true;
+    });
+
+    await openStoryModal(page);
+    await page.locator('#story-add-text-btn').click();
+    await page.locator('#story-caption-input').fill('kaybolmamalı');
+    await page.locator('#story-mention-toggle-btn').click();
+    await page.locator('#story-mention-search-input').fill('a');
+    await page.locator('#story-mention-search-input').press('Enter');
+
+    await expect(page.locator('#story-modal')).toBeVisible();
+    await expect(page.locator('.story-layer-text')).toHaveCount(1);
+    expect(submitFired).toBe(false);
+  });
+
   test('submitting a text-only story round-trips through the viewer without duplication', async ({ page }) => {
     await openStoryModal(page);
     await page.locator('#story-add-text-btn').click();

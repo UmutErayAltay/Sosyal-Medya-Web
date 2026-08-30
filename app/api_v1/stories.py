@@ -17,7 +17,7 @@ ile kaydedilir.
 import re
 from datetime import datetime, timezone
 
-from flask import request, jsonify
+from flask import current_app, request, jsonify
 
 from . import bp
 from ._common import api_login_required
@@ -206,7 +206,24 @@ def api_create_story():
     }
     try:
         result = sb.table("stories").insert(story_data).execute()
-    except Exception:
+    except Exception as e:
+        if "does not exist" not in str(e):
+            # Şema eksikliği DIŞINDA bir hata — eski kolonlarla sessizce
+            # tekrar denemek burada YANLIŞ: o yol `visibility`'yi hiç
+            # yazmıyor, DB varsayılanı `public` olduğu için `close_friends`
+            # bekleyen bir hikaye SESSİZCE herkese açık paylaşılırdı (code
+            # review bulgusu — gizlilik ihlali, web create_story() ile AYNI
+            # düzeltme). Gerçek hatayı logla, istemciye net başarısızlık dön.
+            current_app.logger.error(f"Hikaye insert hatası (native): {e}")
+            return jsonify(error="create_failed"), 500
+        current_app.logger.error(f"Hikaye insert şeması eksik (native), eski kolonlara düşülüyor: {e}")
+        if visibility != "public" or overlay_elements or background_color or caption_color or caption_style:
+            current_app.logger.error(
+                f"Hikaye insert şeması eksikken visibility={visibility!r} / overlay_elements/"
+                "background_color/caption_* istendi (native) — gizlilik/veri kaybını önlemek "
+                "için paylaşım reddedildi."
+            )
+            return jsonify(error="stories_not_available"), 503
         try:
             # overlay_elements/caption_style kolonları migration'sız ortamda
             # yoksa (503 değil) fallback: caption_position gibi eski
@@ -215,7 +232,8 @@ def api_create_story():
                 "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
             }
             result = sb.table("stories").insert(story_data_legacy).execute()
-        except Exception:
+        except Exception as e2:
+            current_app.logger.error(f"Hikaye insert (native, yedek yol) hatası: {e2}")
             return jsonify(error="stories_not_available"), 503
 
     story_id = result.data[0]["id"] if result.data else None
@@ -224,20 +242,25 @@ def api_create_story():
             create_poll(sb, poll_options, story_id=story_id,
                         position_x=poll_position_x, position_y=poll_position_y,
                         scale=poll_scale, rotation=poll_rotation)
-        except Exception:
+        except Exception as e:
+            current_app.logger.error(f"Hikaye anketi oluşturulamadı (native, story_id={story_id}): {e}")
             return jsonify(ok=True, story_id=story_id, poll_error=True)
 
     if story_id and story_mention_recipient_ids:
         # Bildirim gönderimi hikaye oluşturmayı ASLA bloklamamalı — notify()
         # sql/migration_story_caption_style_and_stickers.sql henüz
         # uygulanmamışsa (notifications.type CHECK'inde 'story_mention' yoksa)
-        # hata fırlatır, burada sessizce yutulur (poll_error'un aksine bu
-        # dekoratif bir yan etki, isteği 200 dışında bir şeyle sonuçlandırmaz).
-        try:
-            for recipient_id in story_mention_recipient_ids:
+        # hata fırlatır. Per-recipient try/except: tek bir alıcı patlarsa
+        # AYNI istekteki diğer alıcılar da sessizce atlanıyordu (code review
+        # bulgusu, web create_story() ile AYNI düzeltme).
+        for recipient_id in story_mention_recipient_ids:
+            try:
                 notify_story_mention(sb, actor_id=me, recipient_id=recipient_id)
-        except Exception:
-            pass
+            except Exception as e:
+                current_app.logger.error(
+                    f"Hikaye mention bildirimi gönderilemedi (native, story_id={story_id}, "
+                    f"recipient_id={recipient_id}): {e}"
+                )
 
     return jsonify(ok=True, story_id=story_id)
 
