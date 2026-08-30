@@ -68,6 +68,19 @@
                 if (activeLayerKind === 'layer' && activeLayerId && !storyEditor.findLayer(activeLayerId)) {
                     clearActiveLayerControl();
                 }
+                // AYNI mantık activeTextLayerId (metin textarea'sının bağlı
+                // olduğu katman) için de gerekli — code review bulgusu: ×
+                // ile silinen bir metin katmanı düzenlenirken textarea'ya
+                // yazmaya devam edilirse updateTextLayer() var-olmayan bir
+                // id'ye giderdi, findLayer() sessizce miss edip her tuş
+                // vuruşu HİÇBİR ŞEY yapmadan kaybolurdu.
+                if (activeTextLayerId && !storyEditor.findLayer(activeTextLayerId)) {
+                    activeTextLayerId = null;
+                    currentTextStyle = null;
+                    currentTextColor = null;
+                    if (storyCaptionInput) storyCaptionInput.value = '';
+                    updateTextControlsVisibility();
+                }
             },
             onLayerTap: function (layer) {
                 if (layer.type !== 'text') return;

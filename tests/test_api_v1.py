@@ -5044,6 +5044,45 @@ class TestApiV1StoryMentionHashtagStickers:
 
         self._cleanup(app, author["id"], story_id)
 
+    def test_mention_username_wildcard_is_escaped_not_matched(self, app, client, test_user_factory):
+        """Güvenlik (code review bulgusu): parse_overlay_elements() `uname`'i
+        eskiden .ilike()'e HAM geçiriyordu — username="%" (veya "admin%" gibi
+        hedefli bir desen) SQL LIKE joker karakteri olarak yorumlanıp TÜM
+        profillerle eşleşiyor, rastgele/hedefli birine sahte story_mention
+        bildirimi gönderiyordu (engelleme ilişkisini de bypass ederek).
+        _escape_like() eklendikten sonra "%" LİTERAL bir karakter olarak
+        aranır — hiçbir gerçek kullanıcı adı tam olarak "%" olmadığı için
+        eşleşme SIFIR olmalı, test_mention_of_nonexistent_username_is_
+        silently_dropped ile AYNI (güvenli) davranış."""
+        author = test_user_factory(email="apiv1_story_mention_wildcard@example.com", password="TestPass123!")
+        token = _api_token_for(app, author["id"])
+        headers = {"Authorization": f"Bearer {token}"}
+
+        elements = [{
+            "type": "mention", "username": "%",
+            "position_x": 0.5, "position_y": 0.5, "scale": 1.0,
+        }]
+        resp = client.post(
+            "/api/v1/stories",
+            data={"caption": "wildcard escape testi", "overlay_elements": json.dumps(elements)},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        story_id = resp.get_json()["story_id"]
+
+        fetch = client.get(f"/api/v1/stories/user/{author['id']}", headers=headers)
+        story = next(s for s in fetch.get_json()["stories"] if s["id"] == story_id)
+        assert story["overlay_elements"] is None
+
+        with app.app_context():
+            sb = get_sb()
+            notif = sb.table("notifications").select("id").eq("type", "story_mention").eq(
+                "actor_id", author["id"]
+            ).execute().data
+            assert not notif, "wildcard mention yanlışlıkla bir bildirime yol açtı"
+
+        self._cleanup(app, author["id"], story_id)
+
     def test_self_mention_stored_but_no_notification(self, app, client, test_user_factory):
         author = test_user_factory(email="apiv1_story_mention_self@example.com", password="TestPass123!")
         token = _api_token_for(app, author["id"])

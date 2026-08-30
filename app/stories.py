@@ -21,36 +21,12 @@ from .visibility import followed_and_self_ids
 
 bp = Blueprint("stories", __name__)
 
-_last_cleanup = 0.0
-
 # Bir hikayeye eklenebilecek TOPLAM overlay eleman sayısı (tip fark etmeksizin:
 # text + image + mention + hashtag toplamı) — 2026-08 öncesi 3'tü, çoklu metin
 # katmanı özelliğiyle (metin de artık bir overlay elemanı) 10'a çıkarıldı.
 MAX_OVERLAY_ELEMENTS = 10
 
 _HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?")
-
-
-def _cleanup_expired_stories(sb) -> None:
-    """ARTIK NO-OP — süresi dolmuş hikayeler fiziksel olarak SİLİNMİYOR.
-
-    Kullanıcı isteği: hikaye sahibi kendi süresi dolmuş hikayelerini bir
-    arşivde görebilsin (öne çıkanlara ekleyebilsin veya kalıcı silebilsin),
-    bu yüzden DELETE kaldırıldı. "Aktif" ile "arşivde" ayrımı artık salt
-    `expires_at` filtresiyle yapılır (aktif: `.gt("expires_at", now)` —
-    bkz. active_stories_bar/api_user_stories; arşiv: `.lte("expires_at", now)`
-    — bkz. app/api_v1/stories.py::api_story_archive, SADECE sahibi görür).
-    Tamamen kalıcı silme artık yalnızca api_delete_story()'den (kullanıcının
-    kendi isteğiyle) mümkün. Fonksiyon ve çağrı yeri (active_stories_bar
-    içinde) BİLİNÇLİ OLARAK korunuyor — throttle mantığı (_last_cleanup)
-    değişmedi, ileride başka bir opportunistic temizlik ihtiyacı çıkarsa
-    buraya eklenir."""
-    global _last_cleanup
-    import time
-    now_ts = time.time()
-    if now_ts - _last_cleanup < 600:
-        return
-    _last_cleanup = now_ts
 
 
 def attach_story_poll(sb, story: dict, me: str) -> None:
@@ -114,6 +90,16 @@ def attach_story_poll(sb, story: dict, me: str) -> None:
         }
     except Exception:
         pass
+
+
+def _escape_like(value: str) -> str:
+    """app/api_v1/feed.py::_escape_like ile AYNI gerekçe — PostgREST'in
+    ilike()'ı ham değeri Postgres ILIKE desenine aktarıyor, kullanıcının
+    girdiği `%`/`_` joker karakter olarak yorumlanıyordu (ör. mention
+    sticker'ında username="%" TÜM profilleri eşleştirip rastgele birine
+    sahte story_mention bildirimi gönderiyordu — kullanıcı raporu/güvenlik
+    incelemesi ile bulundu)."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def parse_overlay_elements(sb, raw: str | None, me: str) -> tuple[list[dict], set[str]]:
@@ -225,7 +211,7 @@ def parse_overlay_elements(sb, raw: str | None, me: str) -> tuple[list[dict], se
             # olmayan kullanıcıya işaret eden sticker SESSİZCE atlanır.
             try:
                 prof = sb.table("profiles").select("id, username").ilike(
-                    "username", uname.strip()
+                    "username", _escape_like(uname.strip())
                 ).execute().data
             except Exception:
                 prof = []
@@ -314,8 +300,20 @@ def active_stories_bar(sb, me: str, blocked_ids: set) -> list[dict]:
     """Feed'in üstündeki hikaye çubuğu için aktif hikayeleri kullanıcıya göre
     gruplar. Her grup: en yeni hikaye zamanı + "hepsi görüldü mü" bayrağı
     (halka rengini belirlemek için — görülmemiş varsa renkli, hepsi
-    görülmüşse gri halka, Instagram deseni)."""
-    _cleanup_expired_stories(sb)
+    görülmüşse gri halka, Instagram deseni).
+
+    NOT: burada eskiden bir `_cleanup_expired_stories(sb)` çağrısı vardı,
+    süresi dolmuş hikayeleri fırsatçı olarak (10 dakikada bir throttle'lı)
+    fiziksel olarak SİLİYORDU. Kullanıcı isteğiyle (hikaye sahibi kendi
+    süresi dolmuş hikayelerini arşivde görüp öne çıkarabilsin/silebilsin)
+    o DELETE kaldırıldı — throttle mantığıyla birlikte artık hiçbir şey
+    yapmayan bir fonksiyonu (ve global state'ini) burada TUTMAK yerine
+    TAMAMEN silindi (code review bulgusu). "Aktif" ile "arşivde" ayrımı
+    artık salt `expires_at` filtresiyle yapılır (aktif: `.gt("expires_at",
+    now)` — aşağıda; arşiv: `.lte("expires_at", now)` — bkz.
+    app/api_v1/stories.py::api_story_archive, SADECE sahibi görür). Kalıcı
+    silme artık yalnızca api_delete_story()'den (kullanıcının kendi
+    isteğiyle) mümkün."""
     try:
         now = datetime.now(timezone.utc).isoformat()
         rows = sb.table("stories").select(
@@ -366,8 +364,11 @@ def create_story():
     """Web hikaye oluşturma — `POST /api/v1/stories` (api_create_story) ile
     AYNI `parse_overlay_elements()` yardımcısını paylaşır (bkz. o fonksiyonun
     docstring'i). `overlay_elements` (çoklu metin/GIF-sticker/mention/hashtag
-    katmanı, JSON-encoded form alanı) ve `caption_style` bu route'ta İLK KEZ
-    okunuyor — eskiden SADECE api_v1'de vardı, web hiç desteklemiyordu.
+    katmanı, JSON-encoded form alanı) bu route'ta İLK KEZ okunuyor — eskiden
+    SADECE api_v1'de vardı, web hiç desteklemiyordu. `caption_style` (üst
+    seviye kolon) web'den YAZILMAZ — web'de yazı stili her zaman
+    overlay_elements'teki ilgili metin katmanının kendi `style` alanında
+    taşınır.
 
     Yanıt: `X-Requested-With: fetch` header'ı varsa JSON (yeni katman editörü
     composer'ı için — `delete_story()`'deki AYNI desen), aksi halde eski
@@ -452,12 +453,6 @@ def create_story():
     except ValueError:
         caption_position_y = 0.75
 
-    # Altyazı render stili (hap-şekilli arka plan) — api_v1/stories.py'deki
-    # AYNI doğrulama, web'de İLK KEZ okunuyor.
-    caption_style = (request.form.get("caption_style") or "").strip()
-    if caption_style not in ("pill_light", "pill_dark"):
-        caption_style = None
-
     # Overlay katmanları (metin/GIF-sticker/mention/hashtag) — paylaşılan
     # parser, api_create_story()'nin BİREBİR aynısı.
     overlay_elements, story_mention_recipient_ids = parse_overlay_elements(
@@ -516,11 +511,18 @@ def create_story():
     # BAŞARILI olup anket patlarsa fallback hikayeyi İKİNCİ kez insert
     # ederdi (duplikat). Fallback sadece insert'in kendisi patlarsa
     # (migration'sız ortam: background_color/visibility kolonu yok) çalışır.
+    # NOT: caption_style'a BİLEREK dokunulmuyor (yazılmıyor) — web'in
+    # composer'ında bu alanı gönderen bir form alanı hiç YOK, stil web'de
+    # her zaman overlay_elements'teki ilgili metin katmanının KENDİ `style`
+    # alanında taşınıyor (bkz. parse_overlay_elements). Buraya
+    # `request.form.get("caption_style")` okuyup yazmak her zaman None
+    # yazan, yanıltıcı ölü kod olurdu (code review bulgusu) — native'in
+    # api_create_story()'sindeki GERÇEK caller'ı hâlâ geçerli, o rota
+    # değişmedi.
     story_data = {
         "user_id": me, "image_url": image_url, "video_url": video_url, "caption": caption,
         "background_color": background_color, "visibility": visibility,
         "caption_position_x": caption_position_x, "caption_position_y": caption_position_y,
-        "caption_style": caption_style,
         "caption_color": caption_color,
         "overlay_elements": overlay_elements or None,
     }
@@ -623,8 +625,8 @@ def user_stories(user_id):
 def story_archive():
     """Çağıran kullanıcının KENDİ süresi dolmuş (arşivlenmiş) hikayeleri —
     user_stories()'in AKSİNE user_id parametresi YOK, bu kişisel/gizli bir
-    liste. _cleanup_expired_stories() artık satırları SİLMEDİĞİ için (bkz.
-    o fonksiyonun güncellenmiş yorumu) bu satırlar kalıcı olarak burada
+    liste. Süresi dolan hikayeler artık FİZİKSEL OLARAK SİLİNMİYOR (bkz.
+    active_stories_bar()'ın yorumu) — bu satırlar kalıcı olarak burada
     kalır, sahibi save_highlight/delete_story ile kendisi yönetir."""
     sb = get_sb()
     me = session["user"]["id"]
@@ -634,11 +636,16 @@ def story_archive():
         # hikayelerin metni arşivde kaybolurdu (bkz. sql/migration_story_
         # text_overlay_elements.sql'in "caption sütunu korunur" notu: yalnızca
         # HİÇ text katmanı yoksa arşiv düz caption'a güvenebilir).
+        # limit(100): _cleanup_expired_stories() kaldırıldığı için (bkz.
+        # active_stories_bar() yorumu) arşiv artık SINIRSIZ birikiyor —
+        # api_story_viewers()'daki AYNI sınırlama gerekçesiyle (code review
+        # bulgusu) bir üst sınır konuldu; tam cursor/sayfalama bu ölçekte
+        # (küçük kullanıcı grubu) gereksiz bir erken optimizasyon olurdu.
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
             "background_color, caption_position_x, caption_position_y, caption_style, caption_color, "
             "overlay_elements"
-        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
+        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).limit(100).execute().data
     except Exception:
         rows = []
     return jsonify(stories=rows)

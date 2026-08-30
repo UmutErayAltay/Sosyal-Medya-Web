@@ -2,7 +2,7 @@
 
 app/stories.py'deki web mantığının BİREBİR mirror'ı — hiçbir yeni davranış
 İCAT EDİLMEDİ. Paylaşılan yardımcılar (`active_stories_bar`, `attach_story_poll`,
-`_visible_story_filter`, `_get_highlights`, `_cleanup_expired_stories`) doğrudan
+`_visible_story_filter`, `_get_highlights`, `parse_overlay_elements`) doğrudan
 `..stories`'den import edilir, KOPYALANMAZ.
 
 Route seçimi: web'in `/stories/new`'i yerine api_v1 konvansiyonuna uygun
@@ -298,20 +298,23 @@ def api_story_archive():
     """Çağıran kullanıcının KENDİ süresi dolmuş (arşivlenmiş) hikayeleri —
     api_user_stories()'in AKSİNE user_id parametresi YOK/kabul edilmiyor,
     bu kişisel/gizli bir liste (başkasının arşivi asla görüntülenemez).
-    _cleanup_expired_stories() artık satırları SİLMEDİĞİ için (bkz. o
-    fonksiyonun güncellenmiş yorumu) bu satırlar kalıcı olarak burada
-    kalır, sahibi save-highlight/delete ile kendisi yönetir."""
+    Süresi dolan hikayeler artık FİZİKSEL OLARAK SİLİNMİYOR (bkz.
+    app/stories.py::active_stories_bar()'ın yorumu) — bu satırlar kalıcı
+    olarak burada kalır, sahibi save-highlight/delete ile kendisi yönetir."""
     sb = get_sb()
     me = request.api_user["id"]
     now = datetime.now(timezone.utc).isoformat()
     try:
         # overlay_elements dahil — aksi halde çoklu metin katmanlı hikayelerin
         # metni arşivde kaybolur (bkz. app/stories.py::story_archive AYNI ek).
+        # limit(100): app/stories.py::story_archive() ile AYNI gerekçe (code
+        # review bulgusu) — _cleanup_expired_stories() kaldırıldığı için
+        # arşiv artık sınırsız birikiyor.
         rows = sb.table("stories").select(
             "id, user_id, image_url, video_url, caption, created_at, expires_at, visibility, "
             "background_color, caption_position_x, caption_position_y, caption_style, caption_color, "
             "overlay_elements"
-        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).execute().data
+        ).eq("user_id", me).lte("expires_at", now).order("created_at", desc=True).limit(100).execute().data
     except Exception:
         rows = []
     return jsonify(stories=rows)

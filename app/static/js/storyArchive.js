@@ -109,6 +109,13 @@
     function openDetail(s) {
         activeStory = s;
         detailLastFocused = document.activeElement;
+        // stories.js::showStory() ile AYNI kural — hasTextLayer İSE metin
+        // zaten renderViewerLayers() tarafından her katmanın KENDİ position_x/
+        // position_y/rotation/style/color'ıyla çizilecek; burada AYRICA tek,
+        // ortalanmış bir <p>/<div> eklemek ÇİFT görünüme yol açardı (code
+        // review bulgusu: GIF/mention/hashtag/çoklu-metin katmanları arşiv
+        // detayında hiç görünmüyordu, sadece düz caption fallback'i vardı).
+        var hasTextLayer = (s.overlay_elements || []).some(function (e) { return e.type === 'text'; });
         if (detailMedia) {
             detailMedia.innerHTML = '';
             if (s.image_url) {
@@ -125,7 +132,7 @@
             } else {
                 detailMedia.style.backgroundColor = s.background_color || 'var(--card)';
             }
-            if (s.caption && !s.image_url && !s.video_url) {
+            if (!hasTextLayer && s.caption && !s.image_url && !s.video_url) {
                 // Salt-metin hikaye: yazı ortada, medya yoksa arkaplan zaten yukarıda ayarlandı
                 var capP = document.createElement('p');
                 capP.className = 'story-archive-detail-caption';
@@ -133,13 +140,19 @@
                 if (s.caption_color) capP.style.color = s.caption_color;
                 capP.textContent = s.caption;
                 detailMedia.appendChild(capP);
-            } else if (s.caption) {
+            } else if (!hasTextLayer && s.caption) {
                 var capOverlay = document.createElement('div');
                 capOverlay.className = 'story-archive-detail-caption';
                 if (s.caption_color) capOverlay.style.color = s.caption_color;
                 capOverlay.textContent = s.caption;
                 detailMedia.appendChild(capOverlay);
             }
+            // GIF-sticker/@mention/#hashtag/çoklu-metin katmanları — kendi
+            // temizliğini yapar (clearViewerLayers), detailMedia zaten
+            // position:relative (bkz. .story-archive-detail-media CSS'i).
+            // Callback verilmez — mention/hashtag <a href> varsayılan tarayıcı
+            // navigasyonuyla çalışır (stories.js'teki AYNI karar).
+            if (window.StoryLayers) window.StoryLayers.renderViewerLayers(detailMedia, s.overlay_elements);
         }
         if (!s.image_url && !s.video_url) detailMedia.style.backgroundColor = s.background_color || 'var(--card)';
         else detailMedia.style.backgroundColor = '';
