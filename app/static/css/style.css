@@ -29,7 +29,7 @@
 
     /* Koyu tema için sıcak nötrler */
     --color-charcoal-950: #1C1815;   /* koyu tema zemin */
-    --color-charcoal-850: #2A241F;   /* koyu tema kart */
+    --color-charcoal-800: #2A241F;   /* koyu tema kart */
     --color-cream-100: #F0EBE3;      /* koyu tema metin */
     --color-taupe-400: #9C8F80;      /* koyu tema muted */
     --color-charcoal-700: #3D352C;   /* koyu tema border */
@@ -70,7 +70,6 @@
     --overlay-dark-strong: rgba(43, 36, 32, 0.85);
     --overlay-dark: rgba(43, 36, 32, 0.5);
     --overlay-dark-light: rgba(43, 36, 32, 0.03);
-    --overlay-dark-hint: rgba(43, 36, 32, 0.15);
     --overlay-light-hint: rgba(255, 255, 255, 0.15);
     --overlay-light: rgba(255, 255, 255, 0.3);
     --overlay-light-half: rgba(255, 255, 255, 0.4);
@@ -136,7 +135,7 @@
 /* Koyu tema — sıcak nötr + coral primary */
 [data-theme="dark"] {
     --bg: var(--color-charcoal-950);
-    --card: var(--color-charcoal-850);
+    --card: var(--color-charcoal-800);
     --text: var(--color-cream-100);
     --muted: var(--color-taupe-400);
     --border: var(--color-charcoal-700);
@@ -2095,6 +2094,7 @@ body.navbar-hidden .post-detail-sidebar { top: 16px; }
     position: absolute; max-width: 85%;
     color: var(--color-white); text-align: center; font-size: 14px;
     text-shadow: 0 1px 3px rgba(43, 36, 32, 0.6);
+    word-wrap: break-word; overflow-wrap: break-word;
 }
 .story-paused-indicator {
     position: absolute; top: 12px; right: 12px;
