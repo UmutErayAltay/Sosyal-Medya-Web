@@ -207,6 +207,28 @@ def create_app() -> Flask:
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    # --- api_v1 CORS ---
+    # Scoped to api_v1.* only (same reasoning as the CSRF exemption above):
+    # the web frontend is same-origin and the native client isn't a browser,
+    # neither needs this. Only a third-party browser client (e.g. the
+    # React/TS client, a separate origin) does. Origin must be explicitly
+    # allow-listed via API_CORS_ORIGINS — no wildcard, since responses can
+    # carry per-user data.
+    @app.after_request
+    def _cors_headers(response):
+        origin = request.headers.get("Origin")
+        if (
+            request.endpoint
+            and request.endpoint.startswith("api_v1.")
+            and origin
+            and origin in app.config["API_CORS_ORIGINS"]
+        ):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        return response
+
     # PWA: servis çalışanı KÖK dizinden (/sw.js) sunulur — /static/sw.js olsaydı
     # varsayılan scope'u sadece /static/ ile sınırlı kalır, tüm siteyi kontrol edemezdi.
     @app.route("/sw.js")

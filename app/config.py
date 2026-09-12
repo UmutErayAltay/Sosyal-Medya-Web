@@ -15,3 +15,12 @@ class Config:
     SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
     SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")  # service role - sunucu tarafı only
     SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL")
+
+    # api_v1 CORS — sadece burada listelenen origin'lerden gelen tarayıcı
+    # isteklerine izin verilir (bkz. app/__init__.py::_cors_headers). Web
+    # (Jinja) ve native Android istemcisi buna hiç ihtiyaç duymaz (aynı
+    # origin / tarayıcı değil); bu yalnızca ayrı bir domain'den servis edilen
+    # üçüncü bir istemci (React/TS client) için var.
+    API_CORS_ORIGINS = [
+        o.strip() for o in os.getenv("API_CORS_ORIGINS", "").split(",") if o.strip()
+    ]
