@@ -1,6 +1,42 @@
 # sosyal
 
-Arkadaş grubu için geliştirilen küçük ölçekli bir sosyal medya web uygulaması. Feed, profil, mesajlaşma (bireysel + grup, sesli/görüntülü arama, sticker/GIF, emoji tepkileri), bildirimler (web push dahil), hikayeler, anketler, hashtag/keşfet ve arama özelliklerini içerir.
+[English](README.en.md)
+
+## Açıklama
+
+**sosyal**, arkadaş grubu için geliştirilmiş, Flask + Supabase üzerine kurulu küçük ölçekli bir sosyal medya web uygulamasıdır. Sunucu tarafı Jinja2 ile render edilir; veritabanı, kimlik doğrulama, dosya depolama ve gerçek zamanlı kanalların tamamını Supabase sağlar. Frontend'de framework yoktur — tek bir global stylesheet ve vanilla JavaScript kullanılır, script'ler `npm run build:js` ile esbuild'de birleştirilip minify edilir. Uygulama feed, profil, hikâye (+ arşiv ve öne çıkarlar), anket, reels, hashtag/gündem, arama/keşfet ve zengin bir mesajlaşma katmanı (bireysel + grup, sesli/görüntülü arama, sesli mesaj, sticker/GIF, emoji tepkileri) sunar; bildirimler web push ve FCM ile ulaşır. Aynı backend, native Android istemcisi için `/api/v1` altında Bearer token tabanlı ayrı bir REST API de sunar. PWA olarak kurulabilir (`manifest.json` + service worker) ve `/.well-known/assetlinks.json` ile hem TWA hem native istemci için deep linking doğrulanır.
+
+## Ekran Görüntüleri
+
+*Aşağıdaki görseller uygulama yerelde çalıştırılıp headless Chromium ile, kurgusal örnek verilerle çekilmiştir.*
+
+**Giriş ekranı (1280×800)**
+
+![Giriş ekranı](docs/screenshots/giris-ekrani.png)
+
+**Ana sayfa / feed — açık tema**
+
+![Açık temada feed](docs/screenshots/feed.png)
+
+**Ana sayfa / feed — koyu tema (tema anahtarı)**
+
+![Koyu temada feed](docs/screenshots/feed-koyu-tema.png)
+
+**Post kartı — kullanıcı, metin, medya ve etkileşim satırları**
+
+![Post kartı](docs/screenshots/gonderi-karti.png)
+
+**Üst gezinme çubuğu — arama, akış, mesajlar, admin ve tema anahtarı**
+
+![Navbar](docs/screenshots/navbar.png)
+
+**Mesajlaşma — bireysel ve grup konuşmaları listesi**
+
+![Mesajlaşma](docs/screenshots/mesajlasma.png)
+
+**Mobil profil sayfası (390×844)**
+
+![Mobil profil sayfası](docs/screenshots/profil-mobil.png)
 
 ## Teknoloji Yığını
 
@@ -92,7 +128,8 @@ app/
 ├── config.py            # .env'den yapılandırma
 ├── auth.py              # Giriş/kayıt, Google OAuth, oturum yönetimi
 ├── decorators.py        # login_required vb. ortak decorator'lar
-├── routes/              # Web (Jinja2) uçları: feed, post CRUD, profil, keşfet, reels
+├── routes/              # Web (Jinja2) uçları: feed, post CRUD, profil, keşfet, reels, gizlilik/kullanım koşulları
+├── post_views.py        # Post görüntülenme sayacı (sadece yazara görünen "views")
 ├── api_v1/              # Native (Android) istemcisi için versioned REST API (Bearer token)
 ├── messaging/           # Mesajlaşma: oluşturma, gönderme, tepkiler, grup yönetimi, grup aramaları
 ├── social.py            # Beğeni, yorum, takip, kaydetme
@@ -122,6 +159,8 @@ app/
     ├── js/              # Kaynak JS (sayfa/özellik başına ayrı dosya)
     ├── dist/            # `npm run build:js` çıktısı — template'ler BUNU yükler, js/ değil
     ├── css/style.css    # Tek global stylesheet
+    ├── img/             # PWA ikonları (192 / 512 / maskable)
+    ├── manifest.json    # PWA manifesti (standalone, portrait)
     └── sw.js            # Service worker (statik önbellek + web push)
 
 sql/                      # Idempotent migration dosyaları
@@ -132,5 +171,8 @@ e2e/                      # Playwright uçtan uca testleri
 ## Notlar
 
 - **Test suite:** `tests/` altında kalıcı bir pytest suite var — gerçek Supabase test kullanıcılarıyla çalışır (mock yok), auth/2FA/rate-limit/realtime/WebRTC gibi güvenlik-kritik yolları kapsar. Çalıştırmak için `pip install -r requirements-dev.txt` sonra `python -m pytest tests/ -v`. UI/JS değişiklikleri için ayrıca `npm run test:e2e` (Playwright, gerçek sunucuya karşı, `.env`'de `E2E_ADMIN_EMAIL`/`E2E_ADMIN_PASSWORD` gerekir). `main`'e her push/PR'da GitHub Actions bu pytest suite'ini otomatik çalıştırır (bkz. `.github/workflows/ci.yml`).
+- **Dahil olan özellikler:** post yaşam döngüsü (paylaşma/düzenleme/silme, taslak, zamanlanmış yayın, sabitleme, arşivleme), görüntülenme sayacı, yorum + iç içe yanıt + yorum tepkileri, beğeni, takip istekleri, özel hesap ve "sadece takipçiler" görünürlüğü, yakın arkadaş listesi, engelleme/sessize alma, hikâyeler (çoklu metin/GIF katmanları, arşiv, öne çıkarma), anketler, reels, hashtag takibi ve gündem, arama geçmişi + kaydedilen aramalar, kitaplık/koleksiyonlar, şifre sıfırlama, Google girişi, 2FA (TOTP), aktif oturum yönetimi, hesap askıya alma, admin paneli, gizlilik/kullanım koşulları sayfaları.
+- **JS değişikliği sonrası:** `app/static/js/*.js` düzenlendiyse `npm run build:js` çalıştırılmadan etkisi görünmez — template'ler `app/static/dist/*.bundle.js` yükler. Yeni bir JS dosyası bir sayfaya bağlanacaksa `scripts/build-js.mjs` içindeki MANIFEST'e de eklenmelidir. Geliştirme sırasında `npm run watch:js` açık bırakılabilir.
+- **Yerleşim:** `render.yaml` bir Render Blueprint tanımıdır (build: `pip install -r requirements.txt`, start: `python serve.py`); sırlar repo'da tutulmaz, Render dashboard'undan girilir. `serve.py` `PORT` ortam değişinden okur, `FLASK_SECRET_KEY` üretimde zorunludur ve statik dosyalara `?v=<mtime>` sürümlemesi eklenir.
 - Bu proje küçük bir arkadaş grubu için tasarlanmıştır — güvenlik temel seviyede ele alınmıştır (CSRF koruması, sahiplik kontrolleri, RLS) ama büyük ölçekli/genel kullanım için ek sertleştirme gerekebilir.
 - Ayrı bir native Android istemcisi (kardeş repo) bu backend'in `app/api_v1/` altındaki REST API'sini kullanır.
