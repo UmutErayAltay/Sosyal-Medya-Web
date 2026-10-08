@@ -22,11 +22,15 @@ bp = Blueprint("hashtags", __name__)
 # Python 3'te \w zaten Unicode farkında (ç, ğ, ı, ö, ş, ü dahil)
 HASHTAG_RE = re.compile(r"#(\w+)", re.UNICODE)
 
+# URL içindeki "#bolum" gibi sayfa-içi parça (fragment) hashtag DEĞİLDİR; çıkarmadan önce atılır.
+URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
 
 def extract_hashtags(content: str) -> list[str]:
     """İçerikten benzersiz, küçük harfli hashtag'leri (sırayı koruyarak) çıkarır."""
     if not content:
         return []
+    content = URL_RE.sub(" ", content)
     seen: list[str] = []
     for m in HASHTAG_RE.finditer(content):
         tag = m.group(1).lower()
