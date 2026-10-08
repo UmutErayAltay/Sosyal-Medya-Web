@@ -31,3 +31,4 @@ Thumbs.db
 .claudeignore
 *.png
 *.jpeg
+data/
